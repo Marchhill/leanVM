@@ -211,3 +211,50 @@ fn a_split_cell_must_be_canonical() {
     let p = program(data);
     assert!(std::panic::catch_unwind(|| p.execute(digest)).is_err());
 }
+
+#[test]
+fn raw_permutation_preserves_every_lane_and_has_no_implicit_padding() {
+    let source = "def main():\n    state = StackBuf(13)\n    hint_witness(state, \"state\")\n    out = StackBuf(13)\n    keccak_permute(state, out)\n    expected = StackBuf(13)\n    hint_witness(expected, \"expected\")\n    for i in unroll(0, 13):\n        assert out[i] == expected[i]\n    p = 1\n    p[1] = out[0]\n    p[GEN] = out[1]\n    return\n";
+    let mut lanes = std::array::from_fn::<_, 25, _>(|i| (i as u64 + 1).wrapping_mul(0x123456789abcdef));
+    let pack = |lanes: [u64; 25]| -> Vec<F192> {
+        (0..13)
+            .map(|i| {
+                if i < 8 {
+                    F192::new(lanes[2 * i], lanes[2 * i + 1], 0)
+                } else if i == 8 {
+                    F192::new(lanes[16], 0, 0)
+                } else {
+                    F192::new(lanes[2 * i - 1], lanes[2 * i], 0)
+                }
+            })
+            .collect()
+    };
+    let input = pack(lanes);
+    primitives::keccak::keccak_f(&mut lanes);
+    let expected = pack(lanes);
+    let mut program = compile(&parse(source).unwrap());
+    program.set_witness("state", vec![input.clone()]);
+    program.set_witness("expected", vec![expected.clone()]);
+    let pi = [expected[0], expected[1]];
+    assert!(program.execute(pi).unconstrained_reads.is_empty());
+    let (proof, _) = prove(&program, pi, lean_vm::pcs::TEST_LOG_INV_RATE).unwrap();
+    verify(&program, &pi, &proof).unwrap();
+    for (index, high) in [(0, false), (8, true), (12, false)] {
+        let mut noncanonical = program.clone();
+        let mut forged = input.clone();
+        if high {
+            forged[index].c1 = 1;
+        } else {
+            forged[index].c2 = 1;
+        }
+        noncanonical.set_witness("state", vec![forged]);
+        assert!(std::panic::catch_unwind(|| noncanonical.execute(pi)).is_err());
+    }
+    for index in [0, 8, 12] {
+        let mut bad = program.clone();
+        let mut forged = expected.clone();
+        forged[index] += F192::ONE;
+        bad.set_witness("expected", vec![forged]);
+        assert!(std::panic::catch_unwind(|| bad.execute(pi)).is_err());
+    }
+}

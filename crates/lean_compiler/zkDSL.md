@@ -526,6 +526,8 @@ Up to 128 bytes the statement is exactly one `sha3` block with Keccak's padding 
 - a cell a mid-cell block splits is taken apart into its 64-bit lanes: a hinted low lane `lo`, the high lane `(x + lo)·y⁻¹`, both proved in `K` by one `assert_in_k` (three instructions a cell, once per cell), and each block cell repacked as `hi + y·lo'` (one or two instructions);
 - a known-zero cell costs nothing, so the zero halves of `words` are free, and constant cells split at compile time.
 
+`keccak_permute(state, out)` applies one raw Keccak-f[1600] permutation without absorbing a message or adding padding. Both operands contain thirteen cells in the SHA3 instruction's state layout: cells 0 through 7 pack lane pairs 0 through 15, cell 8 contains only lane 16, and cells 9 through 12 pack lane pairs 17 through 24. Every cell has a zero top 64-bit limb, and cell 8 also has a zero middle limb. A two-cell destination requests the digest lanes; a thirteen-cell destination retains the complete state. The compiler cancels the SHA3 instruction's implicit final padding bit, leaving the permutation unchanged. This primitive lets a guest implement an explicitly constrained byte-stream sponge.
+
 ## Hints: `hint_witness(dest, "name")`
 
 ```python

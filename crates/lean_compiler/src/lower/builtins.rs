@@ -327,6 +327,35 @@ impl FnLower<'_> {
         self.sha3_finish(out);
     }
 
+    /// One raw Keccak-f permutation of thirteen packed state cells.
+    fn lower_keccak_permute(&mut self, args: &[Expr]) {
+        if args.len() != 2 {
+            self.fail("keccak_permute takes two arguments: (state, out)")
+        };
+        let state = self.sha3_words::<13>(&args[0]);
+        let m = std::array::from_fn(|i| self.sponge_cell(state[i], Pad::Keccak));
+        let cap = self.alloc_stack(5);
+        let lane16 = self.sponge_cell(state[8], Pad::Keccak);
+        self.sponge_xor(
+            lane16,
+            SpongeCell::Const(F192::new(1 << 63, 0, 0)),
+            Some(cap),
+            Pad::Keccak,
+        );
+        for i in 1..5 {
+            let zero = self.zero();
+            self.sponge_xor(zero, state[8 + i], Some(cap + i as u32), Pad::Keccak);
+        }
+        let out = self.sha3_out(&args[1]);
+        self.emit(LOp::Sha3 {
+            m,
+            cap,
+            c: out.base,
+            digest: out.digest,
+        });
+        self.sha3_finish(out);
+    }
+
     /// Keccak-256 of `msg` (more than one block) into `out`.
     fn emit_keccak_blocks(&mut self, msg: &[SpongeCell], out: &Sha3Out) {
         const RATE: u32 = primitives::keccak::RATE as u32;
@@ -664,6 +693,7 @@ impl FnLower<'_> {
             "sha3" => self.lower_sha3(args),
             "sha3_cells" => self.lower_sha3_cells(args),
             "keccak" => self.lower_keccak(args),
+            "keccak_permute" => self.lower_keccak_permute(args),
             "assert_in_k" => {
                 if args.len() != 2 {
                     self.fail("assert_in_k(a, b) takes two scalar cells")
