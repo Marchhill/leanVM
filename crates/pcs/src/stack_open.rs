@@ -60,8 +60,8 @@ use primitives::multilinear::eq_eval;
 
 use super::pack::PACKING_WIDTH;
 use super::ring_switch;
+use super::whir::{InitialCommitment, ProverData, recursive_verifier_with_basis_succinct};
 use super::whir::{ProverConfig, VerifierConfig, VerifyError};
-use super::whir::{ProverData, recursive_verifier_with_basis_succinct};
 
 mod basis;
 
@@ -227,6 +227,50 @@ pub fn open_batch_mixed_whir_stacked(
     point_claims: &[StackClaim],
     rings: &[RingSwitchOpen],
 ) {
+    open_stacked(
+        ps,
+        log_n,
+        stack,
+        InitialCommitment::Borrowed {
+            codeword: &prover_data.codeword,
+            tree: &prover_data.merkle_tree,
+        },
+        config,
+        point_claims,
+        rings,
+    );
+}
+
+/// Open once, releasing the initial codeword and tree as soon as their authenticated rows are captured.
+pub fn open_batch_mixed_whir_stacked_consuming(
+    ps: &mut impl Transmitter,
+    log_n: usize,
+    stack: &[F64],
+    prover_data: ProverData,
+    config: &ProverConfig,
+    point_claims: &[StackClaim],
+    rings: &[RingSwitchOpen],
+) {
+    open_stacked(
+        ps,
+        log_n,
+        stack,
+        InitialCommitment::Owned(prover_data),
+        config,
+        point_claims,
+        rings,
+    );
+}
+
+fn open_stacked(
+    ps: &mut impl Transmitter,
+    log_n: usize,
+    stack: &[F64],
+    commitment: InitialCommitment<'_>,
+    config: &ProverConfig,
+    point_claims: &[StackClaim],
+    rings: &[RingSwitchOpen],
+) {
     for ring in rings {
         let qflock_len = 1usize << ring.qflock_vars;
         assert!(
@@ -307,24 +351,17 @@ pub fn open_batch_mixed_whir_stacked(
             .zip(lambdas_pd)
             .fold(F192::ZERO, |sum, (claim, &lambda)| sum + lambda * claim.value());
 
-    // The lifted weight is built and consumed in one pass: each lane window is
-    // filled from the ring-switch outputs and the point claims, then feeds
-    // round 0's message while it is still hot, so nothing re-reads the buffer.
     let lane_block = 1usize << (log_n - config.initial_k);
-    let (b_stack, message) = basis::build(stack, lane_block, point_claims, lambdas_pd, rings, &rs_outputs);
-    mark("basis + initial message", &mut t);
+    let basis = basis::PreparedBasis::new(stack.len(), lane_block, point_claims, lambdas_pd, rings, &rs_outputs);
+    mark("prepare basis", &mut t);
 
-    // 4. One WHIR over the full stack against the combined claim (the
-    //    stack is borrowed by the prover; no copy).
-    super::whir::recursive_prover_with_prepared_basis(
+    super::whir::recursive_prover_with_streamed_commitment(
         config,
         log_n,
         stack,
-        b_stack,
+        &|start, dst| basis.fill(start, dst),
         target,
-        &prover_data.codeword,
-        &prover_data.merkle_tree,
-        Some(message),
+        commitment,
         ps,
     );
 }
@@ -630,6 +667,7 @@ mod tests {
         );
         let (cm, pd) = commit(&stack, log_n, pc.initial_k, pc.log_inv_rates[0]);
         let mut ps = fiat_shamir::transcript::ProverState::from_label(DOMAIN);
+        ps.add_root(&cm.root);
         open_batch_mixed_whir_stacked(
             &mut ps,
             log_n,
@@ -640,6 +678,20 @@ mod tests {
             std::slice::from_ref(&ring),
         );
 
+        let expected = ps.into_proof();
+        let mut consumed_ps = fiat_shamir::transcript::ProverState::from_label(DOMAIN);
+        consumed_ps.add_root(&cm.root);
+        open_batch_mixed_whir_stacked_consuming(
+            &mut consumed_ps,
+            log_n,
+            &stack,
+            pd,
+            &pc,
+            &point_claims,
+            std::slice::from_ref(&ring),
+        );
+        assert_eq!(consumed_ps.into_proof(), expected);
+
         Instance {
             vc: pc,
             log_n,
@@ -647,7 +699,7 @@ mod tests {
             point_claims,
             ring,
             ring_verify,
-            fs: ps.into_proof(),
+            fs: expected,
         }
     }
 
@@ -673,6 +725,9 @@ mod tests {
             claims: verifier_claims(ring_claims),
         };
         let mut vs = fiat_shamir::transcript::VerifierState::from_label(DOMAIN, fs);
+        if vs.next_root().ok().as_ref() != Some(&inst.root) {
+            return false;
+        }
         verify_opening_batch_mixed_whir_stacked(
             &mut vs,
             &inst.vc,

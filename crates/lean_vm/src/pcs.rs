@@ -29,7 +29,9 @@ use crate::transcript::{ProverState, Receiver, Transmitter, VerifierState};
 use primitives::field::F64;
 
 pub use ::pcs::stack_open::{RingSwitchClaim, RingSwitchOpen, RingSwitchVerify, StackClaim as SlotClaim};
-use ::pcs::stack_open::{open_batch_mixed_whir_stacked, verify_opening_batch_mixed_whir_stacked};
+use ::pcs::stack_open::{
+    open_batch_mixed_whir_stacked, open_batch_mixed_whir_stacked_consuming, verify_opening_batch_mixed_whir_stacked,
+};
 use ::pcs::whir::ProverConfig;
 use ::pcs::whir::{ProverData, commit as whir_commit, config_for_rate};
 
@@ -81,6 +83,24 @@ pub struct Committed {
     pub mu: usize,
     /// L0 inverse-rate logarithm bound into the transcript before this commitment.
     pub log_inv_rate: usize,
+    committed_len: usize,
+}
+
+impl Committed {
+    /// Release the codeword during intervening proof stages, retaining its Merkle tree.
+    pub fn release_codeword(&mut self) {
+        drop(std::mem::take(&mut self.prover_data.codeword));
+    }
+
+    /// Re-encode the same immutable witness before opening, without rebinding its root.
+    pub fn rebuild_codeword(&mut self, q: &[F64]) {
+        assert!(
+            self.prover_data.codeword.is_empty(),
+            "release the previous codeword first"
+        );
+        assert_eq!(q.len(), self.committed_len, "witness must match the committed geometry");
+        self.prover_data.codeword = ::pcs::whir::encode_codeword(q, self.mu, LOG_BATCH, self.log_inv_rate);
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -119,6 +139,7 @@ pub fn commit(
         prover_data,
         mu,
         log_inv_rate,
+        committed_len: witness.len(),
     }
 }
 
@@ -154,6 +175,13 @@ pub fn open(ps: &mut ProverState, c: &Committed, q: &[F64], points: &[SlotClaim]
     open_batch_mixed_whir_stacked(ps, c.mu, q, &c.prover_data, &cfg, points, rings)
 }
 
+/// Open once and release the commitment buffers immediately after their authenticated rows are captured.
+pub fn open_consuming(ps: &mut ProverState, c: Committed, q: &[F64], points: &[SlotClaim], rings: &[RingSwitchOpen]) {
+    assert_eq!(q.len(), c.committed_len, "witness must match the committed geometry");
+    let cfg = whir_config(c.mu, c.log_inv_rate);
+    open_batch_mixed_whir_stacked_consuming(ps, c.mu, q, c.prover_data, &cfg, points, rings)
+}
+
 /// Verify the opening (mirror of [`open`]): flock's ring-switched claims
 /// and every `points` slot evaluation are checked together in the ONE stacked
 /// WHIR against `root`, pulling its Merkle phases off the transcript.
@@ -172,6 +200,57 @@ pub fn verify(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn released_codeword_rebuild_preserves_commitment() {
+        let mu = MIN_MU;
+        let block = 1 << (mu - LOG_BATCH);
+        for rate in [1, 2, 3] {
+            for lanes in [1, 3, 37, 64] {
+                let q: Vec<_> = (0..block * lanes)
+                    .map(|i| F64((i as u64).wrapping_mul(0x9E3779B9)))
+                    .collect();
+                let (root, prover_data) = whir_commit(&q, mu, LOG_BATCH, rate);
+                let expected_codeword = prover_data.codeword.to_vec();
+                let expected_tree = prover_data.merkle_tree.to_vec();
+                let mut committed = Committed {
+                    prover_data,
+                    mu,
+                    log_inv_rate: rate,
+                    committed_len: q.len(),
+                };
+                committed.release_codeword();
+                assert!(committed.prover_data.codeword.is_empty());
+                assert_eq!(&*committed.prover_data.merkle_tree, expected_tree);
+                committed.rebuild_codeword(&q);
+                assert_eq!(&*committed.prover_data.codeword, expected_codeword);
+                assert_eq!(&*committed.prover_data.merkle_tree, expected_tree);
+                assert_eq!(*committed.prover_data.merkle_tree.last().unwrap(), root.root);
+            }
+        }
+    }
+
+    #[test]
+    fn released_codeword_rejects_mismatched_geometry() {
+        let mu = MIN_MU;
+        let q = vec![F64::ONE; 1 << (mu - LOG_BATCH)];
+        let (_, prover_data) = whir_commit(&q, mu, LOG_BATCH, TEST_LOG_INV_RATE);
+        let mut committed = Committed {
+            prover_data,
+            mu,
+            log_inv_rate: TEST_LOG_INV_RATE,
+            committed_len: q.len(),
+        };
+        let still_retained = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| committed.rebuild_codeword(&q)));
+        assert!(still_retained.is_err());
+        committed.release_codeword();
+        let wrong_length = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            committed.rebuild_codeword(&q[..q.len() - 1])
+        }));
+        assert!(wrong_length.is_err());
+        assert!(committed.prover_data.codeword.is_empty());
+        committed.rebuild_codeword(&q);
+    }
 
     /// What lets all three verifiers check a plain range instead of re-deriving
     /// the ladder: every size in the window is configurable at every rate.

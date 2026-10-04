@@ -1,12 +1,16 @@
 use std::mem::MaybeUninit;
 
-use primitives::field::{F64, F192};
+#[cfg(test)]
+use primitives::field::F64;
+use primitives::field::F192;
 use primitives::multilinear::fill_eq_table_uninit;
 use zk_alloc::ArenaVec;
 
 use super::{RingSwitchOpen, StackClaim};
 use crate::ring_switch::{DeferredRingSwitchOutput, combine_deferred_chunk};
-use crate::whir::{INITIAL_BASIS_CHUNK, SumcheckMessage, build_initial_basis};
+use crate::whir::INITIAL_BASIS_CHUNK;
+#[cfg(test)]
+use crate::whir::{SumcheckMessage, build_initial_basis};
 
 struct PointWeight<'a> {
     offset: usize,
@@ -73,6 +77,74 @@ impl<'a> PointWeight<'a> {
     }
 }
 
+pub(super) struct PreparedBasis<'a> {
+    lane_block: usize,
+    weights: Vec<PointWeight<'a>>,
+    by_lane: Vec<Vec<usize>>,
+    regions: Vec<(usize, usize, &'a [DeferredRingSwitchOutput])>,
+}
+
+impl<'a> PreparedBasis<'a> {
+    pub(super) fn new(
+        stack_len: usize,
+        lane_block: usize,
+        claims: &'a [StackClaim],
+        lambdas: &[F192],
+        rings: &[RingSwitchOpen],
+        rs_outputs: &'a [DeferredRingSwitchOutput],
+    ) -> Self {
+        assert_eq!(claims.len(), lambdas.len());
+        assert_eq!(
+            rs_outputs.len(),
+            rings.iter().map(|ring| ring.claims.len()).sum::<usize>()
+        );
+        let chunk_log = lane_block.min(INITIAL_BASIS_CHUNK).ilog2() as usize;
+        let weights: Vec<_> = claims
+            .iter()
+            .zip(lambdas)
+            .map(|(claim, &lambda)| PointWeight::new(claim, lambda, chunk_log))
+            .collect();
+        let mut by_lane = vec![Vec::new(); stack_len / lane_block];
+        for (index, weight) in weights.iter().enumerate() {
+            for lane in &mut by_lane[weight.offset / lane_block..weight.end.div_ceil(lane_block)] {
+                lane.push(index);
+            }
+        }
+        // Each region's outputs, in the order the opener numbered them.
+        let mut first = 0;
+        let regions: Vec<_> = rings
+            .iter()
+            .map(|ring| {
+                let outputs = &rs_outputs[first..first + ring.claims.len()];
+                first += ring.claims.len();
+                (ring.offset, ring.offset + (1 << ring.qflock_vars), outputs)
+            })
+            .collect();
+        Self {
+            lane_block,
+            weights,
+            by_lane,
+            regions,
+        }
+    }
+
+    pub(super) fn fill(&self, start: usize, dst: &mut [F192]) {
+        dst.fill(F192::ZERO);
+        for &(offset, end, outputs) in &self.regions {
+            let lo = start.max(offset);
+            let hi = (start + dst.len()).min(end);
+            if lo < hi {
+                combine_deferred_chunk(outputs, lo - offset, &mut dst[lo - start..hi - start]);
+            }
+        }
+        let mut scratch = [MaybeUninit::uninit(); INITIAL_BASIS_CHUNK];
+        for &index in &self.by_lane[start / self.lane_block] {
+            self.weights[index].add(start, dst, &mut scratch);
+        }
+    }
+}
+
+#[cfg(test)]
 pub(super) fn build(
     stack: &[F64],
     lane_block: usize,
@@ -81,45 +153,6 @@ pub(super) fn build(
     rings: &[RingSwitchOpen],
     rs_outputs: &[DeferredRingSwitchOutput],
 ) -> (ArenaVec<F192>, SumcheckMessage) {
-    assert_eq!(claims.len(), lambdas.len());
-    assert_eq!(
-        rs_outputs.len(),
-        rings.iter().map(|ring| ring.claims.len()).sum::<usize>()
-    );
-    let chunk_log = lane_block.min(INITIAL_BASIS_CHUNK).ilog2() as usize;
-    let weights: Vec<_> = claims
-        .iter()
-        .zip(lambdas)
-        .map(|(claim, &lambda)| PointWeight::new(claim, lambda, chunk_log))
-        .collect();
-    let mut by_lane = vec![Vec::new(); stack.len() / lane_block];
-    for (index, weight) in weights.iter().enumerate() {
-        for lane in &mut by_lane[weight.offset / lane_block..weight.end.div_ceil(lane_block)] {
-            lane.push(index);
-        }
-    }
-    // Each region's outputs, in the order the opener numbered them.
-    let mut first = 0;
-    let regions: Vec<_> = rings
-        .iter()
-        .map(|ring| {
-            let outputs = &rs_outputs[first..first + ring.claims.len()];
-            first += ring.claims.len();
-            (ring.offset, ring.offset + (1 << ring.qflock_vars), outputs)
-        })
-        .collect();
-    build_initial_basis(stack, lane_block, |start, dst| {
-        dst.fill(F192::ZERO);
-        for &(offset, end, outputs) in &regions {
-            let lo = start.max(offset);
-            let hi = (start + dst.len()).min(end);
-            if lo < hi {
-                combine_deferred_chunk(outputs, lo - offset, &mut dst[lo - start..hi - start]);
-            }
-        }
-        let mut scratch = [MaybeUninit::uninit(); INITIAL_BASIS_CHUNK];
-        for &index in &by_lane[start / lane_block] {
-            weights[index].add(start, dst, &mut scratch);
-        }
-    })
+    let prepared = PreparedBasis::new(stack.len(), lane_block, claims, lambdas, rings, rs_outputs);
+    build_initial_basis(stack, lane_block, |start, dst| prepared.fill(start, dst))
 }

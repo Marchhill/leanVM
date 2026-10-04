@@ -215,34 +215,13 @@ fn replicate_message_fill_uninit<T: Copy + Send + Sync>(codeword: &mut [std::mem
 /// rides the proof, so a verifier derives `n_lanes` from the announced layout to
 /// read a row and supplies the prefix itself.
 pub fn commit(message: &[F64], log_n: usize, log_batch_size: usize, log_inv_rate: usize) -> (Commitment, ProverData) {
-    assert!(log_inv_rate >= 1, "log_inv_rate must be >= 1 for a non-trivial RS code");
-    assert!(log_n > log_batch_size, "witness must be wider than the interleaving");
-    let log_rows = log_n - log_batch_size;
-    let n_lanes = message.len() >> log_rows;
-    assert_eq!(message.len(), n_lanes << log_rows, "message is whole lane blocks");
-    assert!(
-        n_lanes >= 1 && n_lanes <= 1usize << log_batch_size,
-        "at most 2^log_batch_size lanes carry data"
-    );
-    let k_code = log_rows + log_inv_rate;
-    let n_positions = 1usize << k_code;
-    let codeword_len = n_positions * n_lanes;
-
-    // SAFETY: every codeword element is written before it is read.
-    // `transpose_lane_major` covers every word of the message region (its tiles are
-    // asserted to), and `encode_interleaved_in_place` writes every other replica from
-    // it before transforming that region in place.
-    let mut codeword = unsafe { zk_alloc::ArenaVec::<F64>::uninitialized(codeword_len) };
-
-    // Optional phase timing (WHIR_TRACE): one env lookup per commit, no
-    // work when unset.
     let trace = std::env::var_os("WHIR_TRACE").is_some();
     let t_ntt = std::time::Instant::now();
-    tracing::info_span!("NTT", kind = "base encode", log_domain = k_code, lanes = n_lanes).in_scope(|| {
-        crate::ntt::transpose_lane_major(&mut codeword[..message.len()], message, n_lanes, log_rows);
-        let ntt = AdditiveNttF64::standard(k_code);
-        ntt.encode_interleaved_in_place(&mut codeword, n_lanes, log_inv_rate);
-    });
+    let codeword = encode_codeword(message, log_n, log_batch_size, log_inv_rate);
+    let log_rows = log_n - log_batch_size;
+    let n_lanes = message.len() >> log_rows;
+    let k_code = log_rows + log_inv_rate;
+    let n_positions = 1usize << k_code;
     let ntt_elapsed = t_ntt.elapsed();
     let t_merkle = std::time::Instant::now();
 
@@ -259,6 +238,34 @@ pub fn commit(message: &[F64], log_n: usize, log_batch_size: usize, log_inv_rate
     }
 
     (Commitment { root }, ProverData { codeword, merkle_tree })
+}
+
+/// Re-encode the unchanged committed witness without hashing a new tree or binding a root.
+pub fn encode_codeword(message: &[F64], log_n: usize, log_batch_size: usize, log_inv_rate: usize) -> ArenaVec<F64> {
+    assert!(log_inv_rate >= 1, "log_inv_rate must be >= 1 for a non-trivial RS code");
+    assert!(log_n > log_batch_size, "witness must be wider than the interleaving");
+    let log_rows = log_n - log_batch_size;
+    let n_lanes = message.len() >> log_rows;
+    assert_eq!(message.len(), n_lanes << log_rows, "message is whole lane blocks");
+    assert!(
+        n_lanes >= 1 && n_lanes <= 1usize << log_batch_size,
+        "at most 2^log_batch_size lanes carry data"
+    );
+    let k_code = log_rows + log_inv_rate;
+    let codeword_len = (1usize << k_code) * n_lanes;
+
+    // SAFETY: every codeword element is written before it is read.
+    // `transpose_lane_major` covers every word of the message region (its tiles are
+    // asserted to), and `encode_interleaved_in_place` writes every other replica from
+    // it before transforming that region in place.
+    let mut codeword = unsafe { zk_alloc::ArenaVec::<F64>::uninitialized(codeword_len) };
+
+    tracing::info_span!("NTT", kind = "base encode", log_domain = k_code, lanes = n_lanes).in_scope(|| {
+        crate::ntt::transpose_lane_major(&mut codeword[..message.len()], message, n_lanes, log_rows);
+        let ntt = AdditiveNttF64::standard(k_code);
+        ntt.encode_interleaved_in_place(&mut codeword, n_lanes, log_inv_rate);
+    });
+    codeword
 }
 
 /// Codeword + Merkle tree for one deeper WHIR commitment level.
@@ -757,6 +764,7 @@ fn round_msg_blocks<T: RoundWitness>(f: &[T], b: &[F192], block: usize) -> Sumch
 
 pub(crate) const INITIAL_BASIS_CHUNK: usize = 256;
 
+#[cfg(test)]
 pub(crate) fn build_initial_basis(
     f: &[F64],
     block: usize,
@@ -906,6 +914,144 @@ fn fold_and_msg_blocks<T: RoundWitness>(
             u_2: u_2.reduce(),
         },
     )
+}
+
+struct StreamedLaneBasis<'a> {
+    witness: &'a [F64],
+    block: usize,
+    fill: &'a (dyn Fn(usize, &mut [F192]) + Sync),
+}
+
+impl StreamedLaneBasis<'_> {
+    fn folded_chunk(&self, weights: &[F192], lane: usize, offset: usize, f: &mut [F192], b: &mut [F192]) {
+        f.fill(F192::ZERO);
+        b.fill(F192::ZERO);
+        let n_lanes = self.witness.len() / self.block;
+        let first = lane * weights.len();
+        let mut original_basis = [F192::ZERO; INITIAL_BASIS_CHUNK];
+        for (index, &weight) in weights.iter().enumerate().take(n_lanes.saturating_sub(first)) {
+            let start = (first + index) * self.block + offset;
+            let original = &self.witness[start..start + f.len()];
+            (self.fill)(start, &mut original_basis[..b.len()]);
+            if weights.len() == 1 {
+                for (dst, &value) in f.iter_mut().zip(original) {
+                    *dst = F192::from(value);
+                }
+                b.copy_from_slice(&original_basis[..b.len()]);
+            } else {
+                for (dst, &value) in f.iter_mut().zip(original) {
+                    *dst += weight.mul_base(value);
+                }
+                for (dst, &value) in b.iter_mut().zip(&original_basis) {
+                    *dst += weight * value;
+                }
+            }
+        }
+    }
+
+    fn message(&self, weights: &[F192]) -> SumcheckMessage {
+        let n_lanes = (self.witness.len() / self.block).div_ceil(weights.len());
+        let per = self.block.div_ceil(INITIAL_BASIS_CHUNK);
+        let task = |task: usize| {
+            let (pair, chunk) = (task / per, task % per);
+            let offset = chunk * INITIAL_BASIS_CHUNK;
+            let len = INITIAL_BASIS_CHUNK.min(self.block - offset);
+            let mut stage = [[F192::ZERO; INITIAL_BASIS_CHUNK]; 4];
+            let [f0, b0, f1, b1] = &mut stage;
+            self.folded_chunk(weights, 2 * pair, offset, &mut f0[..len], &mut b0[..len]);
+            if 2 * pair + 1 < n_lanes {
+                self.folded_chunk(weights, 2 * pair + 1, offset, &mut f1[..len], &mut b1[..len]);
+                msg_terms_pair(&f0[..len], &f1[..len], &b0[..len], &b1[..len])
+            } else {
+                msg_terms_lone(&f0[..len], &b0[..len])
+            }
+        };
+        let (u_0, u_2) = accumulate_msg(
+            n_lanes.div_ceil(2) * per,
+            self.witness.len() / 2,
+            F192Unreduced::ZERO,
+            task,
+        );
+        SumcheckMessage {
+            u_0: u_0.reduce(),
+            u_2: u_2.reduce(),
+        }
+    }
+
+    fn collapse(&self, weights: &[F192]) -> (ArenaVec<F192>, ArenaVec<F192>, SumcheckMessage) {
+        assert!(weights.len() >= self.witness.len() / self.block);
+        // SAFETY: each task initializes its disjoint chunk in both buffers.
+        let mut f = unsafe { fold_out_buf(self.block) };
+        let mut b = unsafe { fold_out_buf(self.block) };
+        let f_dst = parallel::SendPtr(f.as_mut_ptr());
+        let b_dst = parallel::SendPtr(b.as_mut_ptr());
+        let per = self.block.div_ceil(INITIAL_BASIS_CHUNK);
+        let task = |chunk: usize| {
+            let start = chunk * INITIAL_BASIS_CHUNK;
+            let len = INITIAL_BASIS_CHUNK.min(self.block - start);
+            let mut fc = [F192::ZERO; INITIAL_BASIS_CHUNK];
+            let mut bc = [F192::ZERO; INITIAL_BASIS_CHUNK];
+            self.folded_chunk(weights, 0, start, &mut fc[..len], &mut bc[..len]);
+            let msg = fold_msg_terms(&fc[..len], &bc[..len]);
+            let stream = Stream::new();
+            // SAFETY: chunks do not overlap; Stream fences the stores before task completion.
+            unsafe {
+                stream.copy(f_dst.slice(start, len), &fc[..len]);
+                stream.copy(b_dst.slice(start, len), &bc[..len]);
+            }
+            msg
+        };
+        let (u_0, u_2) = accumulate_msg(per, self.witness.len() / 2, F192Unreduced::ZERO, task);
+        (
+            f,
+            b,
+            SumcheckMessage {
+                u_0: u_0.reduce(),
+                u_2: u_2.reduce(),
+            },
+        )
+    }
+}
+
+fn streamed_lane_rounds<'a>(
+    witness: &'a [F64],
+    block: usize,
+    rounds: usize,
+    fill: &(dyn Fn(usize, &mut [F192]) + Sync),
+    target: F192,
+    ps: &mut impl Transmitter,
+) -> (SumcheckProver<'a>, Vec<F192>) {
+    assert!(rounds > 0 && block.is_power_of_two() && witness.len().is_multiple_of(block));
+    assert!(witness.len() / block <= 1usize << rounds);
+    let basis = StreamedLaneBasis { witness, block, fill };
+    let mut message = basis.message(&[F192::ONE]);
+    let mut claim = target;
+    send_msg(ps, message, claim);
+    let mut challenges = Vec::with_capacity(rounds);
+    for round in 0..rounds {
+        let challenge = ps.sample();
+        claim = RoundQuad::from_msg(message, claim).eval(challenge);
+        challenges.push(challenge);
+        let weights = build_eq_table_ext(&challenges);
+        if round + 1 == rounds {
+            let (f, combined_basis, message) = basis.collapse(&weights);
+            send_msg(ps, message, claim);
+            return (
+                SumcheckProver {
+                    f: Witness::Ext(f),
+                    combined_basis,
+                    t_r: claim,
+                    quad: RoundQuad::from_msg(message, claim),
+                    round: rounds,
+                    pending: Vec::new(),
+                },
+                challenges,
+            );
+        }
+        message = basis.message(&weights);
+        send_msg(ps, message, claim);
+    }
+    unreachable!()
 }
 
 /// Two-phase witness: the committed K-message (borrowed from the caller, it
@@ -1186,6 +1332,93 @@ pub(crate) fn recursive_prover_with_prepared_basis(
     initial_message: Option<SumcheckMessage>,
     ps: &mut impl Transmitter,
 ) {
+    recursive_prover_initial_basis(
+        config,
+        log_n,
+        witness,
+        InitialBasis::Dense(b_initial, initial_message),
+        target,
+        InitialCommitment::Borrowed {
+            codeword: l0_codeword,
+            tree: l0_tree,
+        },
+        ps,
+    );
+}
+
+#[cfg(test)]
+pub(crate) fn recursive_prover_with_streamed_basis(
+    config: &ProverConfig,
+    log_n: usize,
+    witness: &[F64],
+    fill: &(dyn Fn(usize, &mut [F192]) + Sync),
+    target: F192,
+    l0_codeword: &[F64],
+    l0_tree: &[Hash],
+    ps: &mut impl Transmitter,
+) {
+    recursive_prover_initial_basis(
+        config,
+        log_n,
+        witness,
+        InitialBasis::Streamed(fill),
+        target,
+        InitialCommitment::Borrowed {
+            codeword: l0_codeword,
+            tree: l0_tree,
+        },
+        ps,
+    );
+}
+
+pub(crate) fn recursive_prover_with_streamed_commitment(
+    config: &ProverConfig,
+    log_n: usize,
+    witness: &[F64],
+    fill: &(dyn Fn(usize, &mut [F192]) + Sync),
+    target: F192,
+    commitment: InitialCommitment<'_>,
+    ps: &mut impl Transmitter,
+) {
+    recursive_prover_initial_basis(
+        config,
+        log_n,
+        witness,
+        InitialBasis::Streamed(fill),
+        target,
+        commitment,
+        ps,
+    );
+}
+
+pub(crate) enum InitialCommitment<'a> {
+    Borrowed { codeword: &'a [F64], tree: &'a [Hash] },
+    Owned(ProverData),
+}
+
+impl InitialCommitment<'_> {
+    fn parts(&self) -> (&[F64], &[Hash]) {
+        match self {
+            Self::Borrowed { codeword, tree } => (codeword, tree),
+            Self::Owned(data) => (&data.codeword, &data.merkle_tree),
+        }
+    }
+}
+
+enum InitialBasis<'a> {
+    Dense(ArenaVec<F192>, Option<SumcheckMessage>),
+    Streamed(&'a (dyn Fn(usize, &mut [F192]) + Sync)),
+}
+
+fn recursive_prover_initial_basis(
+    config: &ProverConfig,
+    log_n: usize,
+    witness: &[F64],
+    basis: InitialBasis<'_>,
+    target: F192,
+    commitment: InitialCommitment<'_>,
+    ps: &mut impl Transmitter,
+) {
     let r = config.level_steps;
     let initial_k = config.initial_k;
 
@@ -1212,7 +1445,7 @@ pub(crate) fn recursive_prover_with_prepared_basis(
         n_lanes >= 1 && n_lanes <= num_interleaved_0,
         "at most 2^initial_k lanes"
     );
-    assert_eq!(b_initial.len(), witness.len());
+    let (l0_codeword, l0_tree) = commitment.parts();
     assert_eq!(l0_codeword.len(), block_len_0 * n_lanes);
     assert_eq!(l0_tree.len(), 2 * block_len_0 - 1);
 
@@ -1256,17 +1489,21 @@ pub(crate) fn recursive_prover_with_prepared_basis(
 
     let _t = std::time::Instant::now();
     let sumcheck_span = tracing::info_span!("Sumcheck");
-    let (mut sc_prover, start_msg) =
-        sumcheck_span.in_scope(|| SumcheckProver::new(witness, b_initial, target, lane_block, initial_message));
-    send_msg(ps, start_msg, target);
-
-    let mut r_lane_fold = Vec::with_capacity(initial_k);
-    for j in 0..initial_k {
-        let r_j = ps.sample();
-        let msg = sumcheck_span.in_scope(|| sc_prover.fold_lane(r_j, lane_block, j + 1 == initial_k));
-        send_msg(ps, msg, sc_prover.claim());
-        r_lane_fold.push(r_j);
-    }
+    let (mut sc_prover, r_lane_fold) = sumcheck_span.in_scope(|| match basis {
+        InitialBasis::Dense(b_initial, initial_message) => {
+            let (mut prover, start_msg) = SumcheckProver::new(witness, b_initial, target, lane_block, initial_message);
+            send_msg(ps, start_msg, target);
+            let mut challenges = Vec::with_capacity(initial_k);
+            for j in 0..initial_k {
+                let challenge = ps.sample();
+                let msg = prover.fold_lane(challenge, lane_block, j + 1 == initial_k);
+                send_msg(ps, msg, prover.claim());
+                challenges.push(challenge);
+            }
+            (prover, challenges)
+        }
+        InitialBasis::Streamed(fill) => streamed_lane_rounds(witness, lane_block, initial_k, fill, target, ps),
+    });
     drop(sumcheck_span);
     if trace {
         t_init_sumcheck += _t.elapsed();
@@ -1313,6 +1550,7 @@ pub(crate) fn recursive_prover_with_prepared_basis(
     // ... but the stored proof carries the sorted-unique rows + one octopus over
     // the sorted-unique positions (the verifier re-fans them to ordered).
     ps.hint_merkle(PrunedMerklePaths::prune(l0_tree, block_len_0, &queries_0, l0_row));
+    drop(commitment);
     if trace {
         t_opens += _t.elapsed();
     }
@@ -2690,6 +2928,182 @@ mod tests {
                 assert_eq!(dispatched, expected);
             }
         }
+    }
+
+    #[test]
+    fn streamed_lane_rounds_match_dense_oracle() {
+        let mut rng = Rng::new(0x57EA);
+        for block in [1, 16, INITIAL_BASIS_CHUNK, 4 * INITIAL_BASIS_CHUNK] {
+            for lanes in [1, 2, 3, 37, 64] {
+                let mut f: Vec<F64> = (0..block * lanes).map(|_| F64(rng.next_u64())).collect();
+                let mut b = rng.ext_vec(f.len());
+                if lanes > 2 {
+                    f[(lanes - 1) * block..].fill(F64::ZERO);
+                    b[(lanes - 1) * block..].fill(F192::ZERO);
+                }
+                let target = inner_product_base_ext(&f, &b);
+                let mut dense_ps = fiat_shamir::transcript::ProverState::from_label(b"streamed-lanes");
+                let (mut dense, message) = SumcheckProver::new(&f, ArenaVec::from_slice(&b), target, block, None);
+                send_msg(&mut dense_ps, message, target);
+                let mut expected_challenges = Vec::new();
+                for round in 0..6 {
+                    let challenge = dense_ps.sample();
+                    let message = dense.fold_lane(challenge, block, round == 5);
+                    send_msg(&mut dense_ps, message, dense.claim());
+                    expected_challenges.push(challenge);
+                }
+                let mut streamed_ps = fiat_shamir::transcript::ProverState::from_label(b"streamed-lanes");
+                let (streamed, challenges) = streamed_lane_rounds(
+                    &f,
+                    block,
+                    6,
+                    &|start, out| out.copy_from_slice(&b[start..start + out.len()]),
+                    target,
+                    &mut streamed_ps,
+                );
+                assert_eq!(challenges, expected_challenges, "block={block}, lanes={lanes}");
+                assert_eq!(streamed.f_ext(), dense.f_ext());
+                assert_eq!(&*streamed.combined_basis, &*dense.combined_basis);
+                assert_eq!(streamed.claim(), dense.claim());
+                assert_eq!(
+                    streamed_ps.into_proof(),
+                    dense_ps.into_proof(),
+                    "block={block}, lanes={lanes}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn streamed_opening_proof_bytes_match_dense_and_reopen() {
+        let mut rng = Rng::new(0x0FEA);
+        for rate in [1, 2, 3] {
+            let log_n = 16;
+            let config = config_for_rate(log_n, rate).unwrap();
+            let block = 1 << (log_n - config.initial_k);
+            for lanes in [1, 3, 37, 64] {
+                let f: Vec<F64> = (0..block * lanes).map(|_| F64(rng.next_u64())).collect();
+                let mut b = rng.ext_vec(f.len());
+                if lanes == 64 {
+                    b[(lanes - 1) * block..].fill(F192::ZERO);
+                }
+                let target = inner_product_base_ext(&f, &b);
+                let (commitment, data) = commit(&f, log_n, config.initial_k, rate);
+                let codeword = data.codeword.to_vec();
+                let tree = data.merkle_tree.to_vec();
+                let mut dense_ps = fiat_shamir::transcript::ProverState::from_label(b"streamed-opening");
+                dense_ps.add_root(&commitment.root);
+                recursive_prover_with_basis(
+                    &config,
+                    log_n,
+                    &f,
+                    ArenaVec::from_slice(&b),
+                    target,
+                    &data.codeword,
+                    &data.merkle_tree,
+                    &mut dense_ps,
+                );
+                let expected = dense_ps.into_proof();
+                let mut padded_basis = b.clone();
+                padded_basis.resize(1 << log_n, F192::ZERO);
+                for _ in 0..2 {
+                    let mut ps = fiat_shamir::transcript::ProverState::from_label(b"streamed-opening");
+                    ps.add_root(&commitment.root);
+                    recursive_prover_with_streamed_basis(
+                        &config,
+                        log_n,
+                        &f,
+                        &|start, out| out.copy_from_slice(&b[start..start + out.len()]),
+                        target,
+                        &data.codeword,
+                        &data.merkle_tree,
+                        &mut ps,
+                    );
+                    let actual = ps.into_proof();
+                    assert_eq!(
+                        bincode::serialize(&actual).unwrap(),
+                        bincode::serialize(&expected).unwrap(),
+                        "rate={rate}, lanes={lanes}",
+                    );
+                    let mut verifier = fiat_shamir::transcript::VerifierState::from_label(b"streamed-opening", &actual);
+                    assert_eq!(verifier.next_root().unwrap(), commitment.root);
+                    assert!(recursive_verifier_with_basis(
+                        &config,
+                        lanes,
+                        &padded_basis,
+                        target,
+                        &commitment.root,
+                        &mut verifier,
+                    ));
+                    assert_eq!(&*data.codeword, codeword);
+                    assert_eq!(&*data.merkle_tree, tree);
+                }
+                let regenerated = encode_codeword(&f, log_n, config.initial_k, rate);
+                assert_eq!(&*regenerated, codeword);
+                let owned = ProverData {
+                    codeword: regenerated,
+                    merkle_tree: ArenaVec::from_slice(&tree),
+                };
+                let mut ps = fiat_shamir::transcript::ProverState::from_label(b"streamed-opening");
+                ps.add_root(&commitment.root);
+                recursive_prover_with_streamed_commitment(
+                    &config,
+                    log_n,
+                    &f,
+                    &|start, out| out.copy_from_slice(&b[start..start + out.len()]),
+                    target,
+                    InitialCommitment::Owned(owned),
+                    &mut ps,
+                );
+                assert_eq!(
+                    bincode::serialize(&ps.into_proof()).unwrap(),
+                    bincode::serialize(&expected).unwrap(),
+                    "consumed rate={rate}, lanes={lanes}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn consumed_rebuilt_codeword_does_not_authenticate_changed_witness() {
+        let log_n = 16;
+        let config = config_for_rate(log_n, 1).unwrap();
+        let mut rng = Rng::new(0xBADCAFE);
+        let block = 1 << (log_n - config.initial_k);
+        let mut witness: Vec<_> = (0..3 * block).map(|_| F64(rng.next_u64())).collect();
+        let (commitment, data) = commit(&witness, log_n, config.initial_k, 1);
+        witness[0] += F64::ONE;
+        let basis = rng.ext_vec(witness.len());
+        let target = inner_product_base_ext(&witness, &basis);
+        let regenerated = encode_codeword(&witness, log_n, config.initial_k, 1);
+        let owned = ProverData {
+            codeword: regenerated,
+            merkle_tree: data.merkle_tree,
+        };
+        let mut ps = fiat_shamir::transcript::ProverState::from_label(b"changed-witness");
+        ps.add_root(&commitment.root);
+        recursive_prover_with_streamed_commitment(
+            &config,
+            log_n,
+            &witness,
+            &|start, out| out.copy_from_slice(&basis[start..start + out.len()]),
+            target,
+            InitialCommitment::Owned(owned),
+            &mut ps,
+        );
+        let proof = ps.into_proof();
+        let mut verifier = fiat_shamir::transcript::VerifierState::from_label(b"changed-witness", &proof);
+        assert_eq!(verifier.next_root().unwrap(), commitment.root);
+        let mut padded_basis = basis;
+        padded_basis.resize(1 << log_n, F192::ZERO);
+        assert!(!recursive_verifier_with_basis(
+            &config,
+            3,
+            &padded_basis,
+            target,
+            &commitment.root,
+            &mut verifier,
+        ));
     }
 
     #[test]
