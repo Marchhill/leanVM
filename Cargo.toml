@@ -3,6 +3,9 @@ name = "leanvm"
 version.workspace = true
 edition.workspace = true
 
+[features]
+eip8288-mixed = ["rec_aggregation/eip8288-mixed"]
+
 [[bin]]
 name = "leanvm"
 path = "src/main.rs"

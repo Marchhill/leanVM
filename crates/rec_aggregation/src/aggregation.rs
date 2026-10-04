@@ -45,6 +45,10 @@
 
 use bincode::Options as _;
 use pcs::whir::{MAX_LOG_INV_RATE, MIN_LOG_INV_RATE};
+
+#[cfg(feature = "eip8288-mixed")]
+#[path = "eip8288_mixed.rs"]
+pub mod eip8288_mixed;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
@@ -926,27 +930,6 @@ fn stacked_bytecode() -> &'static [F64] {
     TABLE.get_or_init(|| lean_vm::cpu::layout::bytecode_table(&unified_guest().prog))
 }
 
-/// The slots of the stacked bytecode that are not structurally zero.
-///
-/// Twelve encoding columns sit inside sixteen stacking slots, so a quarter of the
-/// table is zero and contributes nothing to any round of the batching sumcheck.
-/// Read off the table rather than from the column count, so an all-zero column
-/// at the edge only ever shrinks the window.
-fn bytecode_window() -> Range<usize> {
-    static WINDOW: std::sync::OnceLock<Range<usize>> = std::sync::OnceLock::new();
-    WINDOW
-        .get_or_init(|| {
-            let table = stacked_bytecode();
-            let kbc = bytecode_vars() - lean_vm::leaf::N_BYTECODE_SELECTORS;
-            let live = |s: usize| table[s << kbc..(s + 1) << kbc].iter().any(|v| *v != F64::ZERO);
-            let slots = 1 << lean_vm::leaf::N_BYTECODE_SELECTORS;
-            let start = (0..slots).find(|&s| live(s)).expect("the bytecode is not all zero");
-            let end = (0..slots).rfind(|&s| live(s)).expect("the bytecode is not all zero") + 1;
-            start..end
-        })
-        .clone()
-}
-
 /// One round message against a K-valued table: `bt` is the bytecode itself, so
 /// the products are base-by-extension.
 fn round_msg_base(bytecode: &[F64], weights: &[F192]) -> (F192, F192) {
@@ -1139,9 +1122,17 @@ fn aggregate_deferred_claims(
     subproofs: &[DeferredSubproof],
     carried_claims: &[&DeferredClaim],
 ) -> (SubHints, DeferredClaim) {
+    aggregate_deferred_claims_for_program(subproofs, carried_claims, stacked_bytecode(), bytecode_vars())
+}
+
+fn aggregate_deferred_claims_for_program(
+    subproofs: &[DeferredSubproof],
+    carried_claims: &[&DeferredClaim],
+    program_table: &[F64],
+    kbcv: usize,
+) -> (SubHints, DeferredClaim) {
     let child_count = subproofs.len();
     assert_eq!(child_count, carried_claims.len(), "one carried claim per child");
-    let kbcv = bytecode_vars();
 
     let mut transcript = FiatShamirState::from_label(RECURSION_AGG_LABEL);
     transcript.observe(count(child_count));
@@ -1201,8 +1192,14 @@ fn aggregate_deferred_claims(
     // message, and folding LSB-first pairs entries within a slot, so the window's
     // blocks stay aligned all the way down.
     let n_slots = 1 << lean_vm::leaf::N_BYTECODE_SELECTORS;
-    let slot_window = bytecode_window();
     let kbc = kbcv - lean_vm::leaf::N_BYTECODE_SELECTORS;
+    let live = |slot: usize| {
+        program_table[slot << kbc..(slot + 1) << kbc]
+            .iter()
+            .any(|value| *value != F64::ZERO)
+    };
+    let slot_window = (0..n_slots).find(|&slot| live(slot)).expect("nonzero bytecode")
+        ..(0..n_slots).rfind(|&slot| live(slot)).expect("nonzero bytecode") + 1;
     let mut wt = weighted_eq_table(
         &points,
         &gbc,
@@ -1213,7 +1210,7 @@ fn aggregate_deferred_claims(
     // to exist as `2^kbcv` extension elements (three times the memory traffic),
     // and base-by-extension is cheaper than extension-by-extension. Every later
     // round is extension-valued anyway.
-    let bc = &stacked_bytecode()[(slot_window.start << kbc)..(slot_window.end << kbc)];
+    let bc = &program_table[(slot_window.start << kbc)..(slot_window.end << kbc)];
     let mut bt = {
         let msg = round_msg_base(bc, &wt);
         let r = absorb_round(&mut transcript, &mut bscr, &mut r_bc, &mut brun, msg);
@@ -1593,6 +1590,15 @@ fn gen_verify(
     public_input: [F192; 2],
     summary: lean_vm::cpu::VerifySummary,
 ) -> Result<(SubHints, DeferredSubproof), AggregationError> {
+    gen_verify_with_min(program, public_input, summary, MU_MIN)
+}
+
+fn gen_verify_with_min(
+    program: &Program,
+    public_input: [F192; 2],
+    summary: lean_vm::cpu::VerifySummary,
+    minm: usize,
+) -> Result<(SubHints, DeferredSubproof), AggregationError> {
     let proof_stream = &summary.raw.stream;
     let layout = lean_vm::cpu::layout(
         &program.prog,
@@ -1608,7 +1614,7 @@ fn gen_verify(
     // The guest holds one opening arm per candidate committed size, so a child
     // outside that window has no arm to dispatch to. `min_log_committed` keeps
     // every aggregate above the low end, leaving only the ceiling reachable.
-    if !(MU_MIN..=MU_MAX).contains(&layout.shape.mu) {
+    if !(minm..=MU_MAX).contains(&layout.shape.mu) {
         return Err(AggregationError::ChildOutOfRange {
             log_committed: layout.shape.mu,
         });
@@ -2581,6 +2587,10 @@ struct OpeningShape {
 /// The recursion program's placeholder map depends on table structure and bytecode
 /// size, so one compiled guest serves every proof layout.
 fn placeholder_map(kbc: usize) -> BTreeMap<String, String> {
+    placeholder_map_with_min(kbc, MU_MIN)
+}
+
+fn placeholder_map_with_min(kbc: usize, minm: usize) -> BTreeMap<String, String> {
     // Only block and coordinate structure is used here; dummy instructions and
     // table sizes let us derive it before the guest's bytecode exists.
     let stand_in = vec![lean_vm::cpu::Op::Xor { a: 0, b: 0, c: 0 }; 1 << kbc];
@@ -2917,7 +2927,7 @@ fn placeholder_map(kbc: usize) -> BTreeMap<String, String> {
             ood_samples: shape.config.ood_samples,
         }
     };
-    let (minm, maxm) = (MU_MIN, MU_MAX);
+    let maxm = MU_MAX;
     let rates = pcs::whir::MIN_LOG_INV_RATE..=pcs::whir::MAX_LOG_INV_RATE;
     let cands: Vec<_> = rates
         .clone()

@@ -8,6 +8,9 @@ pub mod fibonacci;
 mod hash_chain;
 pub mod signers_cache;
 
+#[cfg(feature = "eip8288-mixed")]
+pub use aggregation::eip8288_mixed;
+
 pub use aggregation::{
     AggregateVerifyError, AggregationError, ClaimSelection, DA_LOG_CELL, DA_LOG_K, DA_MAX_ROWS, EthereumProof,
     MAX_DA_ROOTS, MAX_EPOCHS, MAX_KEYS, MAX_RECURSIONS, SignatureClaims, SphincsClaim, XmssClaimGroup, aggregate,

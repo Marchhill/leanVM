@@ -44,6 +44,9 @@ pub mod sphincs {
 
 pub use rand;
 
+#[cfg(feature = "eip8288-mixed")]
+pub use rec_aggregation::eip8288_mixed;
+
 /// Call once before verifying an [`EthereumProof`]. Idempotent, and
 /// [`setup_prover`] does it for you.
 pub fn setup_verifier() {
