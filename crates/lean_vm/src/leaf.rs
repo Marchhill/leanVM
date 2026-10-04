@@ -727,6 +727,7 @@ pub fn prove_balance(
             build_leaves(count, &count_lay, cols, &count_w, F192::ZERO, &gpow),
         ]
     });
+    drop(gpow);
     // Leaf construction keeps the all-one padding implicit; decomposition uses the full logical depth.
     count_lay.mu = push_lay.mu;
     // All three trees run as ONE RLC-batched GKR (equal μ: push/pull match

@@ -580,7 +580,10 @@ pub fn prove(program: &Program, public_input: [F192; 2], log_inv_rate: usize) ->
         &exec.unconstrained_reads[..exec.unconstrained_reads.len().min(8)]
     );
     let cycles = exec.cycles;
+    let base_counts = exec.base_counts;
+    let mem_used = exec.mem_used;
     let w = crate::stage!("Build witness", || program.build(&exec));
+    drop(exec);
     if !(pcs::MIN_MU..=pcs::MAX_MU).contains(&w.layout.shape.mu) {
         return Err(ProveError::WitnessOutOfRange {
             log_committed: w.layout.shape.mu,
@@ -598,9 +601,10 @@ pub fn prove(program: &Program, public_input: [F192; 2], log_inv_rate: usize) ->
 
     // Announce the prover's sizes, then commit, before sampling any challenge.
     announce_public(&mut ps, w.log_mem, w.layout.taus, log_inv_rate);
-    let committed = crate::stage!("Commit", || {
+    let mut committed = crate::stage!("Commit", || {
         pcs::commit(&mut ps, &w.q, w.layout.shape, log_inv_rate)
     });
+    committed.release_codeword();
 
     // BLAKE2s and SHA3 to flock (§hash_flock), single PCS: each circuit's q_flock
     // is ALWAYS a column in `w.q` (≥1 instance, a program that runs neither opcode
@@ -642,6 +646,7 @@ pub fn prove(program: &Program, public_input: [F192; 2], log_inv_rate: usize) ->
         });
         (bus, table_claims)
     };
+    drop(w.virt);
     let l = &w.layout;
 
     // The PI binding transmits the two LOW memory limbs' evaluations
@@ -680,16 +685,19 @@ pub fn prove(program: &Program, public_input: [F192; 2], log_inv_rate: usize) ->
         crate::hash_flock::ring_switch_open(n_blocks, w.layout.placements[QFLOCK].offset, &reduced),
         crate::hash_flock_keccak::ring_switch_open(n_blocks_k, w.layout.placements[QFLOCK_K].offset, &reduced_k),
     ];
-    crate::stage!("PCS open", || { pcs::open(&mut ps, &committed, &w.q, &slots, &rings) });
+    crate::stage!("Rebuild codeword", || { committed.rebuild_codeword(&w.q) });
+    crate::stage!("PCS open", || {
+        pcs::open_consuming(&mut ps, committed, &w.q, &slots, &rings)
+    });
     Ok((
         ps.into_proof(),
         Stats {
             cycles,
             counts,
-            base_counts: exec.base_counts,
+            base_counts,
             committed: committed_size,
             log_mem: w.log_mem,
-            mem_used: exec.mem_used,
+            mem_used,
         },
     ))
 }
