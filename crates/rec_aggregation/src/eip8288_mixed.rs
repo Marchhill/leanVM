@@ -60,8 +60,35 @@ fn check_dependencies(deps: &[Dependency]) -> Result<(), MixedError> {
     Ok(())
 }
 
-fn dependency_hash(deps: &[Dependency]) -> [u8; 32] {
-    primitives::keccak::keccak256(&deps.iter().flatten().copied().collect::<Vec<_>>())
+/// The 32-byte domain block closing a digest that covers generic dependencies.
+pub const LEANSTARK_DEPS_DOMAIN: [u8; 32] = *b"eip8288/leanstark-deps\0\0\0\0\0\0\0\0\0\0";
+
+/// EIP-8288 `get_deps_hash` of a canonical dependency list.
+///
+/// Without generic (`0x11`) dependencies this is the EIP's BLAKE2s over the 64-byte
+/// `data_hash || verification_key_hash` entries. The EIP leaves `0x11` undefined; here a list
+/// with generic entries hashes `get_deps_hash(sphincs) || get_deps_hash(generic) ||
+/// LEANSTARK_DEPS_DOMAIN`, a 96-byte preimage that no all-SPHINCS list shares.
+pub fn deps_hash(deps: &[Dependency]) -> [u8; 32] {
+    let split = deps.partition_point(|dep| dep[31] == 0x10);
+    let list = |deps: &[Dependency]| {
+        primitives::hash::hash(
+            &deps
+                .iter()
+                .flat_map(|dep| dep[32..].iter().copied())
+                .collect::<Vec<_>>(),
+        )
+    };
+    let sphincs = list(&deps[..split]);
+    if split == deps.len() {
+        return sphincs;
+    }
+    primitives::hash::hash(&[sphincs, list(&deps[split..]), LEANSTARK_DEPS_DOMAIN].concat())
+}
+
+/// EIP-8288 leanSPHINCS `verification_key_hash`: the key itself, root then public parameter.
+pub fn sphincs_verification_key(pk: &SphincsPublicKey) -> [u8; 32] {
+    pk.flatten()
 }
 
 #[cfg(test)]
@@ -97,6 +124,7 @@ mod tests {
             "operand_index",
             "counter_index",
             "generic_data",
+            "dependency_split",
             "bytecode_val",
             "leaf_defer",
             "matpart",
@@ -145,32 +173,18 @@ mod tests {
         false_deps.sort();
         missing.set_witness("mixed_meta", vec![vec![gcount(2), gcount(0), gcount(1), gcount(0)]]);
         missing.set_witness("dependency", false_deps.iter().map(cells).collect());
-        let mut false_cell_hints = Hints::default();
-        push_dependency_bytes(&mut false_cell_hints, &false_deps);
-        push_cell_bytes(&mut false_cell_hints, &program_digest(&program));
-        for (name, entries) in false_cell_hints.0 {
+        let mut false_digest_hints = Hints::default();
+        push_dependency_digest(&mut false_digest_hints, &false_deps);
+        push_block_counters(&mut false_digest_hints, 2 * program.prog.len());
+        for (name, entries) in false_digest_hints.0 {
             missing.set_witness(&name, entries);
         }
-        missing.set_witness(
-            "keccak_split",
-            vec![
-                vec![gcount(192 / 136), gcount(192 % 136)],
-                vec![
-                    gcount(encode_program(&program).unwrap().len() / 136),
-                    gcount(encode_program(&program).unwrap().len() % 136),
-                ],
-            ],
-        );
         missing.set_witness(
             "selection",
             vec![vec![F192::ONE, gcount(false_deps.binary_search(&generic_dep).unwrap())]],
         );
-        let mut false_indices = byte_indices(&false_deps.iter().flatten().copied().collect::<Vec<_>>());
-        false_indices.extend(byte_indices(&encode_program(&program).unwrap()));
-        missing.set_witness("byte_index", false_indices);
         assert!(
-            std::panic::catch_unwind(|| missing.execute(mixed_statement(dependency_hash(&false_deps), &deferred)))
-                .is_err()
+            std::panic::catch_unwind(|| missing.execute(mixed_statement(deps_hash(&false_deps), &deferred))).is_err()
         );
         eprintln!("proving genuine generic leaf");
         let generic = aggregate_mixed(&[], &[], &[generic_input], &[generic_dep], 1).unwrap();
@@ -202,8 +216,8 @@ mod tests {
         let root = aggregate_mixed(&[parent, generic], &[], &[], &[generic_dep], 1).unwrap();
         root.verify().unwrap();
         let payload = root.to_bytes_without_deps();
-        verify_mixed_deps(&dependency_hash(&[generic_dep]), &payload).unwrap();
-        assert!(verify_mixed_deps(&dependency_hash(&union), &payload).is_err());
+        verify_mixed_deps(&deps_hash(&[generic_dep]), &payload).unwrap();
+        assert!(verify_mixed_deps(&deps_hash(&union), &payload).is_err());
         let mut forged = generic_dep;
         forged[32] ^= 1;
         assert!(
@@ -228,6 +242,99 @@ mod tests {
             .is_err()
         );
         eprintln!("mixed root bytes={} key={:02x?}", payload.len(), mixed_guest_key());
+    }
+
+    fn vector_dependencies() -> [Dependency; 5] {
+        let key = |start: u8| std::array::from_fn(|i| start + i as u8);
+        [
+            dep(0x10, [0x07; 32], key(0)),
+            dep(0x10, [0x07; 32], key(1)),
+            dep(0x10, [0x01; 32], [0xff; 32]),
+            dep(0x11, [0x07; 32], key(0)),
+            dep(0x11, [0xa5; 32], [0x5a; 32]),
+        ]
+    }
+
+    /// Expected digests computed in Python from the EIP-8288 `get_deps_hash` pseudocode.
+    #[test]
+    fn deps_hash_matches_eip_pseudocode_vectors() {
+        let [a, b, c, g1, g2] = vector_dependencies();
+        let canonical = |deps: &[Dependency]| {
+            deps.iter()
+                .copied()
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>()
+        };
+        for (deps, expected) in [
+            (
+                vec![],
+                "69217a3079908094e11121d042354a7c1f55b6482ca1a51e1b250dfd1ed0eef9",
+            ),
+            (
+                vec![a],
+                "6921fc8275ae947e76ab603255f550b615341fb880a8635996d30b55201d28f6",
+            ),
+            (
+                vec![b, a, c, a],
+                "27ad454def73a88020d3f7a6428cd790cf354b531b0447013027e7fa277b9e13",
+            ),
+            (
+                vec![g1],
+                "3ae64e624f1d16e19a7699b95f501134828652df566420f26a4f298b5bb54b9a",
+            ),
+            (
+                vec![g2, a, g1, c],
+                "ba1180b0f634d713dbf9b5b87e68a36786f550676d2b05d4f49f699eeb42e90f",
+            ),
+        ] {
+            let digest: String = deps_hash(&canonical(&deps))
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            assert_eq!(digest, expected);
+        }
+    }
+
+    #[test]
+    fn guest_dependency_digest_matches_deps_hash() {
+        let helpers = runtime_guest_source(19);
+        let helpers = format!(
+            "{}{}",
+            &helpers[..helpers.find("\ndef main():").unwrap()],
+            program_seed_source()
+        );
+        let source = format!(
+            "{helpers}\ndef main():\n    powers = HeapBuf(768)\n    for i in unroll(0, 256):\n        powers[GEN ** i] = i\n        powers[GEN ** (256 + i)] = GEN ** i\n        powers[GEN ** (512 + i)] = GEN ** (256 * i)\n    n = hint_witness(\"count\")\n    entries, h0, h1 = mixed_dependencies(n, powers)\n    p = 1\n    assert p[1] == h0\n    assert p[GEN] == h1\n    return\n"
+        );
+        let guest = compile(&lean_compiler::parse(&source).unwrap());
+        let configure = |deps: &[Dependency], split: Option<[usize; 2]>| {
+            let mut hints = Hints::default();
+            hints.push("count", vec![gcount(deps.len())]);
+            for dependency in deps {
+                hints.push("dependency", cells(dependency));
+            }
+            push_dependency_digest(&mut hints, deps);
+            if let Some(split) = split {
+                hints.0.retain(|(name, _)| name != "dependency_split");
+                hints.push("dependency_split", split.map(gcount).to_vec());
+            }
+            let mut configured = guest.clone();
+            hints.install(&mut configured);
+            configured
+        };
+        let [a, b, c, g1, g2] = vector_dependencies();
+        for deps in [vec![], vec![a], vec![c, a, b], vec![g1], vec![c, a, g1, g2]] {
+            let pi = pack_hash_state(&deps_hash(&deps));
+            assert!(configure(&deps, None).execute(pi).unconstrained_reads.is_empty());
+            assert!(std::panic::catch_unwind(|| configure(&deps, None).execute([pi[0] + F192::ONE, pi[1]])).is_err());
+        }
+        // A generic dependency cannot be hashed as a SPHINCS one, nor the reverse.
+        let mixed = [c, a, g1, g2];
+        for split in [[3, 1], [1, 3]] {
+            let pi = pack_hash_state(&deps_hash(&mixed));
+            assert!(std::panic::catch_unwind(|| configure(&mixed, Some(split)).execute(pi)).is_err());
+        }
     }
 
     #[test]
@@ -1011,7 +1118,7 @@ fn runtime_guest_source(kbc: usize) -> String {
     let aggregate = source.find("\ndef aggregate_claims(").expect("aggregation sumchecks");
     source.replace_range(main..aggregate, "\n");
     let mut declarations = format!(
-        "N_COORDS = {}\nMAX_MIXED_DEPENDENCIES = {MAX_DEPENDENCIES}\nMAX_GENERIC_CODE_LOG = {MAX_GENERIC_BYTECODE_LOG}\nGENERIC_COMMITTED_LOG = {MAX_GENERIC_COMMITTED_LOG}\nGENERIC_BUS_LOG = {MAX_GENERIC_BUS_LOG}\nMIXED_COMMITTED_LOG = {MAX_MIXED_COMMITTED_LOG}\nMIXED_BUS_LOG = {MAX_MIXED_BUS_LOG}\n",
+        "N_COORDS = {}\nMAX_MIXED_DEPENDENCIES = {MAX_DEPENDENCIES}\nMAX_MIXED_GENERIC = {MAX_GENERIC_DEPENDENCIES}\nMAX_GENERIC_CODE_LOG = {MAX_GENERIC_BYTECODE_LOG}\nGENERIC_COMMITTED_LOG = {MAX_GENERIC_COMMITTED_LOG}\nGENERIC_BUS_LOG = {MAX_GENERIC_BUS_LOG}\nMIXED_COMMITTED_LOG = {MAX_MIXED_COMMITTED_LOG}\nMIXED_BUS_LOG = {MAX_MIXED_BUS_LOG}\n",
         list_values(&one, "COORD_CONST").len()
     );
     for key in ["BLOCK_KAPPA_ADJ", "COL_KAPPA_ADJ", "COORD_CONST"] {
@@ -1073,6 +1180,9 @@ fn runtime_guest_source(kbc: usize) -> String {
     declarations += &format!("OPCODES = {}\n", literals((0..7).map(|i| g_pow(i).0)));
     for (i, value) in lean_vm::hash_flock::IV_CELLS.iter().enumerate() {
         declarations += &format!("MIXED_BLAKE_IV_{i} = {}\n", f192_literal(*value));
+    }
+    for (i, cell) in LEANSTARK_DEPS_DOMAIN.as_chunks::<16>().0.iter().enumerate() {
+        declarations += &format!("LEANSTARK_DEPS_DOMAIN_{i} = {}\n", f192_literal(pack_16_bytes(cell)));
     }
     let extension = include_str!("../guests/eip8288_mixed.py");
     declarations + &source + extension + &program_seed_source()
@@ -1224,7 +1334,7 @@ impl MixedProof {
         if !recursion_supported(unified_guest(), &self.proof) {
             return Err(MixedError::Capacity);
         }
-        let pi = mixed_statement(dependency_hash(&self.deps), &self.deferred);
+        let pi = mixed_statement(deps_hash(&self.deps), &self.deferred);
         verify(unified_guest(), &pi, &self.proof)
             .map_err(|error| MixedError::Proof(AggregateVerifyError::Snark(error)))?;
         Ok(())
@@ -1367,9 +1477,17 @@ fn push_cell_bytes(hints: &mut Hints, bytes: &[u8]) {
         }
     }
 }
-fn push_dependency_bytes(hints: &mut Hints, deps: &[Dependency]) {
-    for dependency in deps {
-        push_cell_bytes(hints, dependency);
+fn push_dependency_digest(hints: &mut Hints, deps: &[Dependency]) {
+    let split = deps.partition_point(|dep| dep[31] == 0x10);
+    hints.push("dependency_split", vec![gcount(split), gcount(deps.len() - split)]);
+    for count in [split, deps.len() - split] {
+        push_block_counters(hints, count);
+    }
+}
+fn push_block_counters(hints: &mut Hints, blocks: usize) {
+    for block in 1..=blocks {
+        hints.push("counter_index", vec![gcount(block & 255)]);
+        hints.push("counter_index", vec![gcount(block >> 8)]);
     }
 }
 fn program_digest(program: &Program) -> [u8; 32] {
@@ -1394,7 +1512,7 @@ fn dep(scheme: u8, data: [u8; 32], key: [u8; 32]) -> Dependency {
     out
 }
 fn sph_dep(pk: &SphincsPublicKey, data: [u8; 32]) -> Dependency {
-    dep(0x10, data, primitives::keccak::keccak256(&pk.flatten()))
+    dep(0x10, data, sphincs_verification_key(pk))
 }
 fn push_selection(
     hints: &mut Hints,
@@ -1496,8 +1614,7 @@ fn prepare_mixed_with_hints(
     for dependency in selected {
         hints.push("dependency", cells(dependency));
     }
-    push_dependency_bytes(&mut hints, selected);
-    push_hash_split(&mut hints, &selected.iter().flatten().copied().collect::<Vec<_>>());
+    push_dependency_digest(&mut hints, selected);
     hints.push(
         "leaf_defer",
         vec![
@@ -1547,10 +1664,7 @@ fn prepare_mixed_with_hints(
             }
         }
         push_hash_split(&mut hints, &code);
-        for block in 1..=2 * input.program.prog.len() {
-            hints.push("counter_index", vec![gcount(block & 255)]);
-            hints.push("counter_index", vec![gcount(block >> 8)]);
-        }
+        push_block_counters(&mut hints, 2 * input.program.prog.len());
         push_cell_bytes(&mut hints, &program_digest(input.program));
         hints.push("generic_data", pi.to_vec());
         let (sub_hints, mut sub) =
@@ -1579,10 +1693,9 @@ fn prepare_mixed_with_hints(
             hints.push("dependency", cells(dependency));
             push_selection(&mut hints, selected, &mut seen, dependency);
         }
-        push_dependency_bytes(&mut hints, &child.deps);
-        push_hash_split(&mut hints, &child.deps.iter().flatten().copied().collect::<Vec<_>>());
+        push_dependency_digest(&mut hints, &child.deps);
         hints.push("child_carried", child.deferred.cells());
-        let pi = mixed_statement(dependency_hash(&child.deps), &child.deferred);
+        let pi = mixed_statement(deps_hash(&child.deps), &child.deferred);
         let summary = verify(unified_guest(), &pi, &child.proof)
             .map_err(|error| MixedError::Proof(AggregateVerifyError::Snark(error)))?;
         let (sub_hints, sub) =
@@ -1604,7 +1717,7 @@ fn prepare_mixed_with_hints(
         }
         claim
     };
-    let pi = mixed_statement(dependency_hash(selected), &deferred);
+    let pi = mixed_statement(deps_hash(selected), &deferred);
     mutate(&mut hints);
     let mut guest = unified_guest().clone();
     hints.install(&mut guest);

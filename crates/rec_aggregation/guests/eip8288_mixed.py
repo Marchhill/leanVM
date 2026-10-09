@@ -280,29 +280,66 @@ def mixed_generic(logs, squares, fresh):
     return claim, data[0], data[1]
 
 
-def mixed_dependencies(n_g, squares):
+def mixed_list_digest(entries, count_g, powers):
+    # EIP-8288 get_deps_hash: BLAKE2s over each entry's data hash and key, one 64-byte block each.
+    digest = StackBuf(2)
+    if count_g == 1:
+        blake2s([0, 0], [0, 0], digest, md=MD_FINAL)
+    else:
+        states = HeapBuf((count_g * GEN) ** 2)
+        states[1] = BLAKE2S_IV_0
+        states[GEN] = BLAKE2S_IV_1
+        for block in mul_range(1, count_g):
+            entry = entries * block ** 6
+            state = states * block ** 2
+            output = states * (block * GEN) ** 2
+            counter = table_counter(block * GEN, powers)
+            md = StackBuf(1)
+            if block * GEN == count_g:
+                md[0] = counter + MD_FINAL
+            else:
+                md[0] = counter
+            blake2s(entry[2:4], entry[4:6], output[0:2], cv=[state[1], state[GEN]], md=md[0])
+        final = states * count_g ** 2
+        digest[0] = final[1]
+        digest[1] = final[GEN]
+    return digest
+
+
+def mixed_dependencies(n_g, powers):
+    # SPHINCS entries, then generic ones, as canonical order sorts them. Without generic
+    # entries the digest is get_deps_hash; otherwise both lists' digests are hashed with
+    # a domain block, a 96-byte preimage that no 64n-byte list shares.
     assert log(n_g) < MAX_MIXED_DEPENDENCIES + 1
-    byte_table = HeapBuf(256)
-    for i in unroll(0, 256):
-        byte_table[GEN ** i] = i
+    split = StackBuf(2)
+    hint_witness(split, "dependency_split")
+    ns_g = split[0]
+    nt_g = split[1]
+    assert log(ns_g) < MAX_MIXED_DEPENDENCIES + 1
+    assert log(nt_g) < MAX_MIXED_GENERIC + 1
+    assert ns_g * nt_g == n_g
     entries = HeapBuf(n_g ** 6)
-    raw = HeapBuf(n_g ** 96 * GEN ** 136)
-    generic_counts = HeapBuf(n_g * GEN)
-    generic_counts[1] = 1
-    for row in mul_range(1, n_g):
+    for row in mul_range(1, ns_g):
         entry = entries * row ** 6
         hint_witness(entry[0:6], "dependency")
         assert entry[1] == 0
-        scheme = entry[GEN] / f192(0, 72057594037927936, 0)
-        if scheme != 16:
-            assert scheme == 17
-            generic_counts[row * GEN] = generic_counts[row] * GEN
-        else:
-            generic_counts[row * GEN] = generic_counts[row]
-        for cell in unroll(0, 6):
-            mixed_cell_bytes(entry[GEN ** cell], raw * row ** 96 * GEN ** (16 * cell), byte_table)
-    assert log(generic_counts[n_g]) < 17
-    digest = mixed_keccak(raw, n_g ** 96, squares)
+        assert entry[GEN] == f192(0, 1152921504606846976, 0)
+    generic = entries * ns_g ** 6
+    for row in mul_range(1, nt_g):
+        entry = generic * row ** 6
+        hint_witness(entry[0:6], "dependency")
+        assert entry[1] == 0
+        assert entry[GEN] == f192(0, 1224979098644774912, 0)
+    sphincs = mixed_list_digest(entries, ns_g, powers)
+    digest = StackBuf(2)
+    if nt_g == 1:
+        digest[0] = sphincs[0]
+        digest[1] = sphincs[1]
+    else:
+        stark = mixed_list_digest(generic, nt_g, powers)
+        joined = StackBuf(2)
+        blake2s([sphincs[0], sphincs[1]], [stark[0], stark[1]], joined, counter=64, final=0)
+        blake2s([LEANSTARK_DEPS_DOMAIN_0, LEANSTARK_DEPS_DOMAIN_1], [0, 0], digest, cv=joined, counter=96, final=1)
     return entries, digest[0], digest[1]
 
 
@@ -360,7 +397,12 @@ def main():
     checked1 = assert_canonical(seed[1])
     seed0 = seed[0]
     seed1 = seed[1]
-    selected, hash0, hash1 = mixed_dependencies(n_g, squares)
+    powers = HeapBuf(768)
+    for i in unroll(0, 256):
+        powers[GEN ** i] = i
+        powers[GEN ** (256 + i)] = GEN ** i
+        powers[GEN ** (512 + i)] = GEN ** (256 * i)
+    selected, hash0, hash1 = mixed_dependencies(n_g, powers)
     selected_hash = HeapBuf(2)
     selected_hash[1] = hash0
     selected_hash[GEN] = hash1
@@ -373,15 +415,14 @@ def main():
         signer = HeapBuf(4)
         hint_witness(signer[0:4], "raw_sph_claim")
         verify_sig_sphincs(signer)
-        vk = StackBuf(2)
-        keccak([signer[GEN ** 2], signer[GEN ** 3]], vk)
+        # EIP-8288: a SPHINCS key is its own 32-byte verification key, root then public parameter.
         claim = HeapBuf(6)
         claim[1] = 0
         claim[GEN] = f192(0, 1152921504606846976, 0)
         claim[GEN ** 2] = signer[1]
         claim[GEN ** 3] = signer[GEN]
-        claim[GEN ** 4] = vk[0]
-        claim[GEN ** 5] = vk[1]
+        claim[GEN ** 4] = signer[GEN ** 2]
+        claim[GEN ** 5] = signer[GEN ** 3]
         raw_marks[raw * GEN] = mixed_cover(claim, selected, n_g, covered, raw_marks[raw])
     origins_g = ng_g * nc_g
     fresh = HeapBuf(origins_g ** DEFER_SIZE)
@@ -399,7 +440,7 @@ def main():
     child_marks[1] = generic_marks[ng_g]
     for child in mul_range(1, nc_g):
         count_g = hint_witness("child_count")
-        deps, h0, h1 = mixed_dependencies(count_g, squares)
+        deps, h0, h1 = mixed_dependencies(count_g, powers)
         row_marks = HeapBuf(count_g * GEN)
         row_marks[1] = child_marks[child]
         for row in mul_range(1, count_g):
