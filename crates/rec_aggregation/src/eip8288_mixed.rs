@@ -1226,6 +1226,7 @@ fn runtime_guest_source(kbc: usize) -> String {
         source = source.replace(key, value);
     }
     declarations += &format!("OPCODES = {}\n", literals((0..7).map(|i| g_pow(i).0)));
+    declarations += &format!("GENERIC_VK_DOMAIN = {}\n", literals(GENERIC_VK_DOMAIN));
     for (i, value) in lean_vm::hash_flock::IV_CELLS.iter().enumerate() {
         declarations += &format!("MIXED_BLAKE_IV_{i} = {}\n", f192_literal(*value));
     }
@@ -1272,7 +1273,11 @@ pub fn generic_recursion_supported(program: &Program, proof: &lean_vm::cpu::Proo
         && recursion_supported_with_bounds(program, proof, MAX_GENERIC_COMMITTED_LOG, MAX_GENERIC_BUS_LOG)
 }
 
-/// The canonical code preimage used by the EIP-8288 generic verification-key hash.
+/// Domain tag opening the generic verification-key hash preimage.
+pub const GENERIC_VK_DOMAIN: [u8; 32] = *b"eip8288/leanstark-vk/leanvm-cpu\0";
+
+/// EIP-8288 leanSTARK `verification_key_hash` of a generic program: Keccak-256 of
+/// `GENERIC_VK_DOMAIN` and the canonical code encoding.
 pub fn generic_verification_key(program: &Program) -> Result<[u8; 32], MixedError> {
     Ok(primitives::keccak::keccak256(&encode_program(program)?))
 }
@@ -1283,7 +1288,8 @@ fn encode_program(program: &Program) -> Result<Vec<u8>, MixedError> {
     if !n.is_power_of_two() || n > 1 << MAX_GENERIC_BYTECODE_LOG {
         return Err(MixedError::Program);
     }
-    let mut bytes = Vec::with_capacity(4 + 45 * n);
+    let mut bytes = Vec::with_capacity(GENERIC_VK_DOMAIN.len() + 4 + 45 * n);
+    bytes.extend_from_slice(&GENERIC_VK_DOMAIN);
     bytes.extend_from_slice(&(n as u32).to_le_bytes());
     for op in &program.prog {
         let (tag, args, limbs, md) = match *op {
@@ -1694,8 +1700,15 @@ fn prepare_mixed_with_hints(
             vec![integer(input.program.prog.len().trailing_zeros() as usize)],
         );
         let code = encode_program(input.program)?;
-        hints.push("code_header", code[..4].iter().map(|&x| integer(x as usize)).collect());
-        for instruction in code[4..].as_chunks::<45>().0 {
+        let code_start = GENERIC_VK_DOMAIN.len() + 4;
+        hints.push(
+            "code_header",
+            code[GENERIC_VK_DOMAIN.len()..code_start]
+                .iter()
+                .map(|&x| integer(x as usize))
+                .collect(),
+        );
+        for instruction in code[code_start..].as_chunks::<45>().0 {
             hints.push(
                 "code_instruction",
                 instruction.iter().map(|&x| integer(x as usize)).collect(),

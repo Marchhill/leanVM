@@ -202,12 +202,15 @@ def mixed_generic(logs, squares, fresh):
     code_log_g = g_power_of_word(program_log, squares, 4)
     assert log(code_log_g) < MAX_GENERIC_CODE_LOG + 1
     size_g = squares[code_log_g]
-    length_g = GEN ** 4 * size_g ** 45
+    # The key hash preimage is the 32-byte domain tag, then the canonical code.
+    length_g = GEN ** 36 * size_g ** 45
     raw = HeapBuf(length_g * GEN ** 136)
-    hint_witness(raw[0:4], "code_header")
-    assert g_power_of_word(word(raw, 0, 4), squares, 15) == size_g
+    for i in unroll(0, 32):
+        raw[GEN ** i] = GENERIC_VK_DOMAIN[i]
+    hint_witness(raw[32:36], "code_header")
+    assert g_power_of_word(word(raw, 32, 4), squares, 15) == size_g
     for row in mul_range(1, size_g):
-        instruction = raw * GEN ** 4 * row ** 45
+        instruction = raw * GEN ** 36 * row ** 45
         hint_witness(instruction[0:45], "code_instruction")
     vk = mixed_keccak(raw, length_g, squares)
     powers = HeapBuf(768)
@@ -220,7 +223,7 @@ def mixed_generic(logs, squares, fresh):
         for row in mul_range(1, size_g):
             table[size_g ** slot * row] = 0
     for row in mul_range(1, size_g):
-        instruction = raw * GEN ** 4 * row ** 45
+        instruction = raw * GEN ** 36 * row ** 45
         opcode = g_power_of_word(instruction[1], squares, 3)
         c = HeapBuf(12)
         done = match(log(opcode), range(0, 7), lambda op: columns(op, instruction, 1, squares, powers, c))
