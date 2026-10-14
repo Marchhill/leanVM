@@ -76,6 +76,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn generic_verification_key_uses_the_eip8288_domain_and_exact_canonical_key() {
+        use lean_vm::cpu::Op;
+        let program = Program::assemble(
+            vec![Op::Set { o: 1, k: integer(7) }],
+            std::collections::HashMap::new(),
+            0,
+        );
+        let mut canonical_key = vec![0u8; 49];
+        canonical_key[..4].copy_from_slice(&1u32.to_le_bytes());
+        canonical_key[4] = 2;
+        canonical_key[5..9].copy_from_slice(&1u32.to_le_bytes());
+        canonical_key[21..29].copy_from_slice(&7u64.to_le_bytes());
+        let expected =
+            primitives::keccak::keccak256(&[b"ethereum/8288/leanSTARK/vk/v1\0".as_slice(), &canonical_key].concat());
+        assert_eq!(generic_verification_key(&program).unwrap(), expected);
+        assert_ne!(
+            expected,
+            primitives::keccak::keccak256(&[b"eip8288/leanstark-vk/leanvm-cpu\0".as_slice(), &canonical_key].concat())
+        );
+        canonical_key[21] ^= 1;
+        assert_ne!(
+            expected,
+            primitives::keccak::keccak256(&[GENERIC_VK_DOMAIN.as_slice(), &canonical_key].concat())
+        );
+    }
+
+    #[test]
     #[ignore]
     fn mixed_leaf_and_same_key_depth_two_bind_programs_and_discards() {
         let data = [7; 32];
@@ -1274,7 +1301,7 @@ pub fn generic_recursion_supported(program: &Program, proof: &lean_vm::cpu::Proo
 }
 
 /// Domain tag opening the generic verification-key hash preimage.
-pub const GENERIC_VK_DOMAIN: [u8; 32] = *b"eip8288/leanstark-vk/leanvm-cpu\0";
+pub const GENERIC_VK_DOMAIN: [u8; 30] = *b"ethereum/8288/leanSTARK/vk/v1\0";
 
 /// EIP-8288 leanSTARK `verification_key_hash` of a generic program: Keccak-256 of
 /// `GENERIC_VK_DOMAIN` and the canonical code encoding.
