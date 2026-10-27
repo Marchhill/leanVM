@@ -283,71 +283,38 @@ def mixed_generic(logs, squares, fresh):
     return claim, data[0], data[1]
 
 
-def mixed_list_digest(entries, count_g, powers):
-    # EIP-8288 get_deps_hash: BLAKE2s over the 96-byte scheme || data_hash || key entries,
-    # three 64-byte blocks per pair. An odd list's last block is half an entry and the zero
-    # padding after the list. The final counter is the 96n-byte message length: 64 per full
-    # block, then 32 for a half block (64j + 32 is 64j XOR 32 in the binary field).
-    digest = StackBuf(2)
-    pairs_g = hint_witness("dependency_pairs")
-    assert log(pairs_g) < MAX_MIXED_DEPENDENCIES + 1
-    geometry = StackBuf(3)
-    if pairs_g ** 2 == count_g:
-        geometry[0] = pairs_g ** 3
-        geometry[1] = GEN
-        geometry[2] = 0
-    else:
-        assert pairs_g ** 2 * GEN == count_g
-        geometry[0] = pairs_g ** 3 * GEN ** 2
-        geometry[1] = 1
-        geometry[2] = 32
-    blocks_g = geometry[0]
-    last_step = geometry[1]
-    half_block = geometry[2]
-    if count_g == 1:
-        blake2s([0, 0], [0, 0], digest, md=MD_FINAL)
-    else:
-        states = HeapBuf((blocks_g * GEN) ** 2)
-        states[1] = BLAKE2S_IV_0
-        states[GEN] = BLAKE2S_IV_1
-        for block in mul_range(1, blocks_g):
-            input = entries * block ** 4
-            state = states * block ** 2
-            output = states * (block * GEN) ** 2
-            md = StackBuf(1)
-            if block * GEN == blocks_g:
-                md[0] = table_counter(block * last_step, powers) + half_block + MD_FINAL
-            else:
-                md[0] = table_counter(block * GEN, powers)
-            blake2s(input[0:2], input[2:4], output[0:2], cv=[state[1], state[GEN]], md=md[0])
-        final = states * blocks_g ** 2
-        digest[0] = final[1]
-        digest[1] = final[GEN]
-    return digest
-
-
 def mixed_dependencies(n_g, powers):
-    # Each entry's scheme is leanSPHINCS or leanSTARK, at most MAX_MIXED_GENERIC of the latter.
-    # Two zero cells after the list pad an odd list's last digest block.
+    # EIP-8288 get_deps_hash: BLAKE2s over each entry's 64-byte data_hash || key, one block each.
+    # leanSPHINCS is the only enabled scheme; the digest omits the scheme, so every entry,
+    # selected or not, must carry it.
     assert log(n_g) < MAX_MIXED_DEPENDENCIES + 1
-    entries = HeapBuf(n_g ** 6 * GEN ** 2)
-    generic_counts = HeapBuf(n_g * GEN)
-    generic_counts[1] = 1
+    entries = HeapBuf(n_g ** 6)
     for row in mul_range(1, n_g):
         entry = entries * row ** 6
         hint_witness(entry[0:6], "dependency")
         assert entry[1] == 0
-        scheme = entry[GEN] / f192(0, 72057594037927936, 0)
-        if scheme != 16:
-            assert scheme == 17
-            generic_counts[row * GEN] = generic_counts[row] * GEN
-        else:
-            generic_counts[row * GEN] = generic_counts[row]
-    assert log(generic_counts[n_g]) < MAX_MIXED_GENERIC + 1
-    padding = entries * n_g ** 6
-    padding[1] = 0
-    padding[GEN] = 0
-    digest = mixed_list_digest(entries, n_g, powers)
+        assert entry[GEN] == f192(0, 1152921504606846976, 0)
+    digest = StackBuf(2)
+    if n_g == 1:
+        blake2s([0, 0], [0, 0], digest, md=MD_FINAL)
+    else:
+        states = HeapBuf((n_g * GEN) ** 2)
+        states[1] = BLAKE2S_IV_0
+        states[GEN] = BLAKE2S_IV_1
+        for block in mul_range(1, n_g):
+            entry = entries * block ** 6
+            state = states * block ** 2
+            output = states * (block * GEN) ** 2
+            counter = table_counter(block * GEN, powers)
+            md = StackBuf(1)
+            if block * GEN == n_g:
+                md[0] = counter + MD_FINAL
+            else:
+                md[0] = counter
+            blake2s(entry[2:4], entry[4:6], output[0:2], cv=[state[1], state[GEN]], md=md[0])
+        final = states * n_g ** 2
+        digest[0] = final[1]
+        digest[1] = final[GEN]
     return entries, digest[0], digest[1]
 
 
@@ -394,6 +361,8 @@ def main():
     assert log(ns_g) < 5
     assert log(ng_g) < 2
     assert log(nc_g) < 3
+    # leanSTARK (0x11) is reserved, so no generic CPU proof leaf.
+    assert ng_g == 1
     if nc_g != 1:
         assert ns_g == 1
         assert ng_g == 1
