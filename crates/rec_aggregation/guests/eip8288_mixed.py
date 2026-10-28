@@ -283,38 +283,66 @@ def mixed_generic(logs, squares, fresh):
     return claim, data[0], data[1]
 
 
-def mixed_dependencies(n_g, powers):
-    # EIP-8288 get_deps_hash: BLAKE2s over each entry's 64-byte data_hash || key, one block each.
-    # leanSPHINCS is the only enabled scheme; the digest omits the scheme, so every entry,
-    # selected or not, must carry it.
-    assert log(n_g) < MAX_MIXED_DEPENDENCIES + 1
-    entries = HeapBuf(n_g ** 6)
-    for row in mul_range(1, n_g):
-        entry = entries * row ** 6
-        hint_witness(entry[0:6], "dependency")
-        assert entry[1] == 0
-        assert entry[GEN] == f192(0, 1152921504606846976, 0)
+def mixed_list_digest(entries, count_g, powers):
+    # EIP-8288 get_deps_hash: BLAKE2s over each entry's data hash and key, one 64-byte block each.
     digest = StackBuf(2)
-    if n_g == 1:
+    if count_g == 1:
         blake2s([0, 0], [0, 0], digest, md=MD_FINAL)
     else:
-        states = HeapBuf((n_g * GEN) ** 2)
+        states = HeapBuf((count_g * GEN) ** 2)
         states[1] = BLAKE2S_IV_0
         states[GEN] = BLAKE2S_IV_1
-        for block in mul_range(1, n_g):
+        for block in mul_range(1, count_g):
             entry = entries * block ** 6
             state = states * block ** 2
             output = states * (block * GEN) ** 2
             counter = table_counter(block * GEN, powers)
             md = StackBuf(1)
-            if block * GEN == n_g:
+            if block * GEN == count_g:
                 md[0] = counter + MD_FINAL
             else:
                 md[0] = counter
             blake2s(entry[2:4], entry[4:6], output[0:2], cv=[state[1], state[GEN]], md=md[0])
-        final = states * n_g ** 2
+        final = states * count_g ** 2
         digest[0] = final[1]
         digest[1] = final[GEN]
+    return digest
+
+
+def mixed_dependencies(n_g, powers):
+    # SPHINCS entries, then generic ones, as canonical order sorts them. Without generic
+    # entries the digest is get_deps_hash; otherwise both lists' digests are hashed with
+    # a domain block, a 96-byte preimage that no 64n-byte list shares.
+    assert log(n_g) < MAX_MIXED_DEPENDENCIES + 1
+    split = StackBuf(2)
+    hint_witness(split, "dependency_split")
+    ns_g = split[0]
+    nt_g = split[1]
+    assert log(ns_g) < MAX_MIXED_DEPENDENCIES + 1
+    assert log(nt_g) < MAX_MIXED_GENERIC + 1
+    assert ns_g * nt_g == n_g
+    entries = HeapBuf(n_g ** 6)
+    for row in mul_range(1, ns_g):
+        entry = entries * row ** 6
+        hint_witness(entry[0:6], "dependency")
+        assert entry[1] == 0
+        assert entry[GEN] == f192(0, 1152921504606846976, 0)
+    generic = entries * ns_g ** 6
+    for row in mul_range(1, nt_g):
+        entry = generic * row ** 6
+        hint_witness(entry[0:6], "dependency")
+        assert entry[1] == 0
+        assert entry[GEN] == f192(0, 1224979098644774912, 0)
+    sphincs = mixed_list_digest(entries, ns_g, powers)
+    digest = StackBuf(2)
+    if nt_g == 1:
+        digest[0] = sphincs[0]
+        digest[1] = sphincs[1]
+    else:
+        stark = mixed_list_digest(generic, nt_g, powers)
+        joined = StackBuf(2)
+        blake2s([sphincs[0], sphincs[1]], [stark[0], stark[1]], joined, counter=64, final=0)
+        blake2s([LEANSTARK_DEPS_DOMAIN_0, LEANSTARK_DEPS_DOMAIN_1], [0, 0], digest, cv=joined, counter=96, final=1)
     return entries, digest[0], digest[1]
 
 
@@ -361,8 +389,6 @@ def main():
     assert log(ns_g) < 5
     assert log(ng_g) < 2
     assert log(nc_g) < 3
-    # leanSTARK (0x11) is reserved, so no generic CPU proof leaf.
-    assert ng_g == 1
     if nc_g != 1:
         assert ns_g == 1
         assert ng_g == 1
