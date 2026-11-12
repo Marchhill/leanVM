@@ -32,6 +32,11 @@ pub fn batch_hash(claims: &[[u8; 32]]) -> [u8; 32] {
     primitives::keccak::keccak256(&batch_preimage(claims))
 }
 
+/// A batch leaf's public input: `batch_hash(claims)` as two canonical 128-bit cells.
+pub fn batch_statement(claims: &[[u8; 32]]) -> [F192; 2] {
+    pack_hash_state(&batch_hash(claims))
+}
+
 fn batch_preimage(claims: &[[u8; 32]]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(BATCH_DOMAIN.len() + 32 * claims.len());
     bytes.extend_from_slice(&BATCH_DOMAIN);
@@ -148,7 +153,12 @@ mod tests {
 
     /// A verifier program under its own key that accepts any statement; `variant` changes the key.
     fn any_statement_program(variant: usize) -> Program {
-        compile(&lean_compiler::parse(&format!("def main():\n    x = HeapBuf(2)\n    x[1] = {variant}\n    x[GEN] = x[1] * x[1]\n    return\n")).unwrap())
+        compile(
+            &lean_compiler::parse(&format!(
+                "def main():\n    x = HeapBuf(2)\n    x[1] = {variant}\n    x[GEN] = x[1] * x[1]\n    return\n"
+            ))
+            .unwrap(),
+        )
     }
 
     fn leaf_input<'a>(
@@ -2032,7 +2042,7 @@ fn prepare_mixed_with_hints(
         if !generic_recursion_supported(input.program, input.proof) {
             return Err(MixedError::Capacity);
         }
-        let pi = pack_hash_state(&batch_hash(input.claims));
+        let pi = batch_statement(input.claims);
         let summary = verify(input.program, &pi, input.proof)
             .map_err(|error| MixedError::Proof(AggregateVerifyError::Snark(error)))?;
         hints.push(
