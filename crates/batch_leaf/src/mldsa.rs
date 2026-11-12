@@ -15,6 +15,7 @@ use crate::{Claim, Hints, Scheme, cell, count, flds};
 
 pub const ARITH: &str = include_str!("../guests/mldsa_arith.py");
 const GUEST: &str = include_str!("../guests/mldsa.py");
+pub const LANES: &str = include_str!("../guests/lanes.py");
 
 pub const CLAIM_TAG: &[u8; 16] = b"EIP8288:mldsa:44";
 const GAMMA1: i32 = 1 << 17;
@@ -142,7 +143,7 @@ impl Scheme for MlDsa44 {
     const NAME: &'static str = "mldsa44";
 
     fn source() -> String {
-        format!("ZT = ZT_PLACEHOLDER\nFINV_REC = FINV_REC_PLACEHOLDER\n{ARITH}\n{GUEST}")
+        format!("ZT = ZT_PLACEHOLDER\nFINV_REC = FINV_REC_PLACEHOLDER\n{ARITH}\n{LANES}\n{GUEST}")
     }
 
     fn placeholders(ps: &mut BTreeMap<String, String>) {

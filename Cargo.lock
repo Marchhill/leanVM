@@ -436,6 +436,7 @@ dependencies = [
  "serde",
  "sha3 0.10.9",
  "sphincs",
+ "tide-fn-dsa",
  "xmss",
 ]
 
@@ -2328,6 +2329,60 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ad99c4c6d32803332c548b1af0540b357b3f5fc0be8f6c6bfe8b2e6ae784070"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "tide-fn-dsa"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6ffdeaeb54b57316fee4c1bd5a7eaa2b2d46560e4a9404dbea0c86ea68b645e"
+dependencies = [
+ "tide-fn-dsa-comm",
+ "tide-fn-dsa-kgen",
+ "tide-fn-dsa-sign",
+ "tide-fn-dsa-vrfy",
+]
+
+[[package]]
+name = "tide-fn-dsa-comm"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2771499ddbaa44c358b9684222b376dfc910a3a983bf2c1e9f82c62a684abb9"
+dependencies = [
+ "cpufeatures 0.2.17",
+ "rand_core 0.6.4",
+ "zeroize",
+]
+
+[[package]]
+name = "tide-fn-dsa-kgen"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56323c175a7cfb950d5768657a5c0fa72cce113acb0d0b7470b1bbdb00679c59"
+dependencies = [
+ "cc",
+ "sha2",
+ "tide-fn-dsa-comm",
+ "zeroize",
+]
+
+[[package]]
+name = "tide-fn-dsa-sign"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "578dd20255b4883c0eb3bb3ba10404af36e812ad09007a113508f15da8ad2a23"
+dependencies = [
+ "tide-fn-dsa-comm",
+ "zeroize",
+]
+
+[[package]]
+name = "tide-fn-dsa-vrfy"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8a19f70a6185d9d7acd1ab9a212064a38afc51d9ad5806293d618f9099bafaf"
+dependencies = [
+ "tide-fn-dsa-comm",
 ]
 
 [[package]]
