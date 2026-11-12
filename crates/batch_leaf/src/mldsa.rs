@@ -370,3 +370,59 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod soundness {
+    use super::*;
+    use crate::{program, witness};
+
+    fn proves(program: &lean_vm::cpu::Program, hints: &Hints, pi: [F192; 2]) -> bool {
+        let mut program = program.clone();
+        for (name, entries) in &hints.0 {
+            program.set_witness(name.clone(), entries.clone());
+        }
+        let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            lean_vm::cpu::prove(&program, pi, 1)
+                .ok()
+                .is_some_and(|(proof, _)| lean_vm::cpu::verify(&program, &pi, &proof).is_ok())
+        }));
+        run.unwrap_or(false)
+    }
+
+    /// Each mutation of an honest witness must stop the proof.
+    #[test]
+    #[ignore]
+    fn mutated_witnesses_do_not_prove() {
+        let program = program::<MlDsa44>();
+        let (_, hints, pi, _) = witness::<MlDsa44>(items(1));
+        assert!(proves(&program, &hints, pi));
+        let flip = |name: &str, entry: usize, slot: usize, f: &dyn Fn(F192) -> F192| {
+            let mut h = Hints(hints.0.clone());
+            let e = &mut h.0.get_mut(name).unwrap()[entry][slot];
+            *e = f(*e);
+            h
+        };
+        let next = |x: F192| x * F192::new(primitives::field::G.0, 0, 0);
+        let one = |x: F192| x + F192::ONE;
+        let cases: Vec<(&str, Hints)> = vec![
+            ("message lane", flip("ml_msg", 0, 0, &one)),
+            ("pk lane", flip("ml_pk", 0, 100, &one)),
+            ("c~ lane", flip("ml_ctilde", 0, 0, &one)),
+            ("z sign", flip("ml_z", 5, 2, &one)),
+            ("z magnitude", flip("ml_z", 5, 0, &next)),
+            ("hint bit", flip("ml_h", 0, 3, &one)),
+            ("usehint t", flip("uh", 7, 0, &next)),
+            ("usehint zero flag", flip("uh", 7, 3, &one)),
+            ("rejection flag", flip("rej_acc", 3, 0, &one)),
+            ("sample hit", flip("sib_hit", 20, 0, &next)),
+            ("sample code", flip("sib_codes", 0, 0, &next)),
+            ("reduction remainder", flip("mq", 100, 0, &next)),
+            ("canonical remainder", flip("ma", 100, 0, &next)),
+            ("byte", flip("bytes", 10, 0, &next)),
+        ];
+        for (label, h) in cases {
+            assert!(!proves(&program, &h, pi), "{label} mutation still proves");
+            println!("{label}: rejected");
+        }
+    }
+}
