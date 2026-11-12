@@ -199,12 +199,6 @@ pub fn witness<S: Scheme>(mut items: Vec<S::Item>) -> (Vec<S::Item>, Hints, [F19
     for item in &items {
         S::push_hints(item, &mut hints);
     }
-    for w in claims.windows(2) {
-        let lane = (0..4)
-            .find(|&j| w[0][8 * j..8 * j + 8] != w[1][8 * j..8 * j + 8])
-            .unwrap();
-        hints.push("diff_lane", vec![count(lane)]);
-    }
     let pi = public_input(&batch_hash(&claims));
     (items, hints, pi, claims)
 }

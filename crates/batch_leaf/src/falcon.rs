@@ -382,6 +382,7 @@ mod soundness {
             ("reduction", flip("fq", 100, 0, &next)),
             ("canonical", flip("fa", 100, 0, &next)),
             ("norm slack", flip("fa_slack", 0, 0, &next)),
+            ("s2 magnitude 2048", flip("fa_s2", 5, 0, &|_| count(2048))),
         ];
         for (label, h) in cases {
             assert!(!proves(&program, &h, pi), "{label} mutation still proves");

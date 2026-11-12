@@ -251,6 +251,7 @@ mod soundness {
             ("ht path", flip("sl_auth", 6, 8, &one)),
             ("byte", flip("bytes", 1, 3, &next)),
             ("table cell", flip("table_cells", 7, 0, &one)),
+            ("digit 16", flip("sl_digits", 1, 3, &|_| count(16))),
         ];
         for (label, h) in cases {
             assert!(!proves(&program, &h, pi), "{label} mutation still proves");

@@ -1,7 +1,8 @@
 # EIP-8288 batch leaf: N >= 1 claims under one program, published as
 # get_batch_hash(claims) = Keccak-256(b'EIP8288:batch:v1' || claim_0 || ... || claim_{N-1})
 # in the two 128-bit public-input cells. The claims are produced by the scheme's
-# `verify_claim`, one call per claim, and must be strictly increasing as 32-byte strings.
+# `verify_claim`, one call per claim. Their order is the aggregation circuit's check
+# (EIP-8288: the leaf verifier need not repeat it).
 # N is a hint, so one program (one verification key) serves every batch size.
 
 TAG_0 = TAG_0_PLACEHOLDER
@@ -23,66 +24,6 @@ def put_cell(x, dst):
     assert_in_k(lo[0], hi)
     dst[1] = lo[0]
     dst[GEN] = hi
-    return
-
-
-def lane_less(a, b):
-    # a < b for two lanes compared as the 8 bytes they hold (byte 0 first, each
-    # byte's bit 7 first), i.e. as big-endian strings. One byte per iteration keeps
-    # the code small; (ra, rb, eq, lt) carry through st.
-    ab = HeapBuf(BASE_FIELD_BITS)
-    bb = HeapBuf(BASE_FIELD_BITS)
-    hint_decompose_bits(ab, a, BASE_FIELD_BITS)
-    hint_decompose_bits(bb, b, BASE_FIELD_BITS)
-    st = HeapBuf(36)
-    st[1] = 0
-    st[GEN] = 0
-    st[GEN ** 2] = 1
-    st[GEN ** 3] = 0
-    for byte in mul_range(1, GEN ** 8):
-        cur = st * byte ** 4
-        xa = ab * byte ** 8
-        xb = bb * byte ** 8
-        w = byte ** 8
-        ra = cur[1]
-        rb = cur[GEN]
-        eq = cur[GEN ** 2]
-        lt = cur[GEN ** 3]
-        for bit in unroll(0, 8):
-            x = xa[GEN ** (7 - bit)]
-            xa[GEN ** (7 - bit)] = x * x
-            y = xb[GEN ** (7 - bit)]
-            xb[GEN ** (7 - bit)] = y * y
-            ra += x * w * COORD_BASIS[7 - bit]
-            rb += y * w * COORD_BASIS[7 - bit]
-            d = x + y
-            lt += eq * d * y
-            eq = eq * (1 + d)
-        nxt = cur * GEN ** 4
-        nxt[1] = ra
-        nxt[GEN] = rb
-        nxt[GEN ** 2] = eq
-        nxt[GEN ** 3] = lt
-    fin = st * GEN ** 32
-    assert fin[1] == a
-    assert fin[GEN] == b
-    assert fin[GEN ** 3] == 1
-    return
-
-
-def pick_lanes(prev, cur, k: Const):
-    for m in unroll(0, k):
-        assert prev[GEN ** m] == cur[GEN ** m]
-    return prev[GEN ** k], cur[GEN ** k]
-
-
-def check_increasing(prev, cur):
-    # The first lane where the two claims differ is hinted; the lanes before it
-    # must be equal and that lane must order them.
-    j = hint_witness("diff_lane")
-    assert log(j) < 4
-    a, b = match(log(j), range(0, 4), lambda k: pick_lanes(prev, cur, k))
-    lane_less(a, b)
     return
 
 
@@ -111,10 +52,6 @@ def main():
         dst = body * i ** 4
         put_cell(c0, dst)
         put_cell(c1, dst * GEN ** 2)
-    for i in mul_range(GEN, n):
-        cur = body * i ** 4
-        prev = cur / GEN ** 4
-        check_increasing(prev, cur)
     # pad10*1 with Keccak's 0x01: lane M gets 0x01, the block's last lane 0x80.
     last_g = blocks_g ** RATE_LANES / GEN
     if length_g == last_g:

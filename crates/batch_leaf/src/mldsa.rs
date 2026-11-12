@@ -394,7 +394,7 @@ mod tests {
 #[cfg(test)]
 mod soundness {
     use super::*;
-    use crate::{program, witness};
+    use crate::{count, program, witness};
 
     fn proves(program: &lean_vm::cpu::Program, hints: &Hints, pi: [F192; 2]) -> bool {
         let mut program = program.clone();
@@ -439,6 +439,26 @@ mod soundness {
             ("reduction remainder", flip("mq", 100, 0, &next)),
             ("canonical remainder", flip("ma", 100, 0, &next)),
             ("byte", flip("bytes", 10, 0, &next)),
+            // validity constraints on non-canonical witnesses
+            ("z at the bound gamma1 - beta", {
+                let mut h = Hints(hints.0.clone());
+                let e = &mut h.0.get_mut("ml_z").unwrap()[5];
+                e[0] = count(65458);
+                e[1] = F192::ONE;
+                h
+            }),
+            ("hint weight omega + 1", {
+                let mut h = Hints(hints.0.clone());
+                let e = &mut h.0.get_mut("ml_h").unwrap()[0];
+                let mut set = e.iter().filter(|&&b| b == F192::ONE).count();
+                for b in e.iter_mut() {
+                    if set <= 80 && *b == F192::ZERO {
+                        *b = F192::ONE;
+                        set += 1;
+                    }
+                }
+                h
+            }),
         ];
         for (label, h) in cases {
             assert!(!proves(&program, &h, pi), "{label} mutation still proves");
