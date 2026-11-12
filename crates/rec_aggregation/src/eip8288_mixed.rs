@@ -302,6 +302,40 @@ mod tests {
         assert_eq!(union.dependencies().len(), MAX_CLAIMS_PER_BATCH_LEAF + 3);
     }
 
+    /// Benchmark variant: any change to a hinted bytecode-table cell is rejected.
+    #[test]
+    #[ignore]
+    fn table_vk_rejects_a_tampered_table() {
+        assert!(TABLE_VK, "build with EIP8288_TABLE_VK=1");
+        let data = [7; 32];
+        let pi = pack_hash_state(&batch_hash(&[data]));
+        let program = compile(
+            &lean_compiler::parse(&format!(
+                "def main():\n    p = 1\n    p[1] = {}\n    p[GEN] = {}\n    return\n",
+                f192_literal(pi[0]),
+                f192_literal(pi[1])
+            ))
+            .unwrap(),
+        );
+        let (inner, _) = prove(&program, pi, 1).unwrap();
+        let generic_dep = dep(0x11, data, generic_verification_key(&program).unwrap());
+        let claims = [data];
+        let input = || GenericInput { program: &program, proof: &inner, claims: &claims };
+        let (guest, _, honest_pi) = prepare_mixed_with_hints(&[], &[], &[input()], &[generic_dep], 1, |_| {}).unwrap();
+        guest.execute(honest_pi);
+        let n = program.prog.len();
+        for (row, column) in [(0, 0), (5, 3), (n / 2, 7), (n - 1, 11)] {
+            let (guest, _, honest_pi) = prepare_mixed_with_hints(&[], &[], &[input()], &[generic_dep], 1, |hints| {
+                hints.entries("table_row")[row][column] += F192::ONE;
+            })
+            .unwrap();
+            assert!(
+                std::panic::catch_unwind(|| guest.execute(honest_pi)).is_err(),
+                "accepted a tampered table cell at row {row} column {column}"
+            );
+        }
+    }
+
     #[test]
     #[ignore]
     fn mixed_leaf_and_same_key_depth_two_bind_programs_and_discards() {
@@ -1585,7 +1619,8 @@ fn runtime_guest_source(kbc: usize) -> String {
         declarations += &format!("LEANSTARK_DEPS_DOMAIN_{i} = {}\n", f192_literal(pack_16_bytes(cell)));
     }
     let extension = include_str!("../guests/eip8288_mixed.py");
-    declarations + &source + extension + &program_seed_source()
+    let extension = if TABLE_VK { table_vk_extension(extension) } else { extension.to_string() };
+    declarations + &source + &extension + &program_seed_source()
 }
 
 fn recursion_supported(program: &Program, proof: &lean_vm::cpu::Proof) -> bool {
@@ -1633,7 +1668,35 @@ pub const GENERIC_VK_DOMAIN: [u8; 30] = *b"ethereum/8288/leanSTARK/vk/v1\0";
 /// EIP-8288 leanSTARK `verification_key_hash` of a generic program: Keccak-256 of
 /// `GENERIC_VK_DOMAIN` and the canonical code encoding.
 pub fn generic_verification_key(program: &Program) -> Result<[u8; 32], MixedError> {
+    if TABLE_VK {
+        let n = program.prog.len();
+        if !n.is_power_of_two() || n > 1 << MAX_GENERIC_BYTECODE_LOG {
+            return Err(MixedError::Program);
+        }
+        let seed = lean_vm::cpu::fs_seed(program);
+        let mut out = [0u8; 32];
+        for (i, cell) in seed.iter().enumerate() {
+            out[16 * i..16 * i + 8].copy_from_slice(&cell.c0.to_le_bytes());
+            out[16 * i + 8..16 * i + 16].copy_from_slice(&cell.c1.to_le_bytes());
+        }
+        return Ok(out);
+    }
     Ok(primitives::keccak::keccak256(&encode_program(program)?))
+}
+
+/// Benchmark variant: the generic key is the program's Fiat-Shamir seed (a hash of its
+/// bytecode table) rather than Keccak of its canonical code encoding.
+pub const TABLE_VK: bool = option_env!("EIP8288_TABLE_VK").is_some();
+
+fn table_vk_extension(extension: &str) -> String {
+    let start = extension.find("def mixed_generic(").expect("mixed_generic");
+    let end = start + extension[start..].find("\ndef batch_cell_bytes(").expect("next function");
+    format!(
+        "{}{}\n\n{}",
+        &extension[..start],
+        include_str!("../guests/eip8288_mixed_tablevk.py"),
+        &extension[end..]
+    )
 }
 
 fn encode_program(program: &Program) -> Result<Vec<u8>, MixedError> {
@@ -2060,34 +2123,42 @@ fn prepare_mixed_with_hints(
             "program_log",
             vec![integer(input.program.prog.len().trailing_zeros() as usize)],
         );
+        if TABLE_VK {
+            let n = input.program.prog.len();
+            let table = lean_vm::cpu::layout::bytecode_table(&input.program.prog);
+            for row in 0..n {
+                hints.push("table_row", (3..15).map(|c| F192::from(table[c * n + row])).collect());
+            }
+        } else {
         let code = encode_program(input.program)?;
-        let code_start = GENERIC_VK_DOMAIN.len() + 4;
-        hints.push(
-            "code_header",
-            code[GENERIC_VK_DOMAIN.len()..code_start]
-                .iter()
-                .map(|&x| integer(x as usize))
-                .collect(),
-        );
-        for instruction in code[code_start..].as_chunks::<45>().0 {
+            let code_start = GENERIC_VK_DOMAIN.len() + 4;
             hints.push(
-                "code_instruction",
-                instruction.iter().map(|&x| integer(x as usize)).collect(),
+                "code_header",
+                code[GENERIC_VK_DOMAIN.len()..code_start]
+                    .iter()
+                    .map(|&x| integer(x as usize))
+                    .collect(),
             );
-            let offsets: &[usize] = match instruction[0] {
-                0 | 1 | 3 | 4 => &[1, 5, 9],
-                2 => &[1],
-                5 => &[1, 5, 9, 13, 17, 25, 41],
-                6 => &[1, 5, 9, 13, 17, 21, 25, 29, 33, 37],
-                _ => return Err(MixedError::Capacity),
-            };
-            for &offset in offsets {
-                for &byte in &instruction[offset..offset + 2] {
-                    hints.push("operand_index", vec![gcount(byte as usize)]);
+            for instruction in code[code_start..].as_chunks::<45>().0 {
+                hints.push(
+                    "code_instruction",
+                    instruction.iter().map(|&x| integer(x as usize)).collect(),
+                );
+                let offsets: &[usize] = match instruction[0] {
+                    0 | 1 | 3 | 4 => &[1, 5, 9],
+                    2 => &[1],
+                    5 => &[1, 5, 9, 13, 17, 25, 41],
+                    6 => &[1, 5, 9, 13, 17, 21, 25, 29, 33, 37],
+                    _ => return Err(MixedError::Capacity),
+                };
+                for &offset in offsets {
+                    for &byte in &instruction[offset..offset + 2] {
+                        hints.push("operand_index", vec![gcount(byte as usize)]);
+                    }
                 }
             }
+            push_hash_split(&mut hints, &code);
         }
-        push_hash_split(&mut hints, &code);
         push_block_counters(&mut hints, 2 * input.program.prog.len());
         push_cell_bytes(&mut hints, &program_digest(input.program));
         hints.push("generic_data", pi.to_vec());
