@@ -1,0 +1,2 @@
+{"kind":"merge","scheme":"falcon512","n":1,"run":0,"prove_s":4.6622,"verify_ms":28.821,"proof_bytes":290824,"deps":2,"max_claims":16,"code_log":13,"committed_log":25,"peak_rss_gib":7.29}
+{"kind":"merge","scheme":"falcon512","n":1,"run":1,"prove_s":4.7209,"verify_ms":29.749,"proof_bytes":290824,"deps":2,"max_claims":16,"code_log":13,"committed_log":25,"peak_rss_gib":7.29}

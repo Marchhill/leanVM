@@ -13,3 +13,12 @@ Aggregation variants (build-time env, see rec_aggregation/src/eip8288_mixed.rs e
   c13m16  GENERIC_CODE_LOG=13, mixed 29/28
   c15m16  GENERIC_CODE_LOG=15, GENERIC_COMMITTED_LOG=27, mixed 30/30
   c14k26m30 (mac) GENERIC_CODE_LOG=14, GENERIC_COMMITTED_LOG=26, mixed 30/30
+
+Follow-up round (table-seed key, leaf optimisations, SLH-DSA, any-length ML-DSA):
+  *-v1.jsonl, mldsa44-d6820656.jsonl, prev/: earlier leaf code (before optimisation / before the
+  in-leaf order check was dropped); falcon512.jsonl, slhdsa128s.jsonl, mldsa44*.jsonl, null.jsonl:
+  final leaf code at 7885e986 (order check dropped; ML-DSA over any-length messages, mldsa44 =
+  69-byte passkey message, mldsa44m32 / m400 = 32 / 400 bytes).
+  Aggregation variants tv*: EIP8288_TABLE_VK=1 (key = the program's Fiat-Shamir seed over its
+  bytecode table); tv12 code 2^12; tv13k25 code 2^13 committed 2^25 (default node caps);
+  tv14k23m29 / tv14k27m29 code 2^14 with node caps 29/28. "-final" rows use the final leaves.

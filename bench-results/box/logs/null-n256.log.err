@@ -1,18 +1,18 @@
 	Command being timed: "./target/release/batch_bench null 256 3"
-	User time (seconds): 27.69
-	System time (seconds): 1.06
-	Percent of CPU this job got: 538%
-	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:05.33
+	User time (seconds): 2.83
+	System time (seconds): 0.07
+	Percent of CPU this job got: 443%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:00.65
 	Average shared text size (kbytes): 0
 	Average unshared data size (kbytes): 0
 	Average stack size (kbytes): 0
 	Average total size (kbytes): 0
-	Maximum resident set size (kbytes): 928896
+	Maximum resident set size (kbytes): 92944
 	Average resident set size (kbytes): 0
 	Major (requiring I/O) page faults: 0
-	Minor (reclaiming a frame) page faults: 235772
-	Voluntary context switches: 1332
-	Involuntary context switches: 323
+	Minor (reclaiming a frame) page faults: 24969
+	Voluntary context switches: 880
+	Involuntary context switches: 18
 	Swaps: 0
 	File system inputs: 0
 	File system outputs: 8

@@ -1,0 +1,1 @@
+{"kind":"tree","scheme":"falcon512","n":16,"run":0,"prove_s":252.7929,"verify_ms":28.292,"proof_bytes":291304,"deps":16,"max_claims":16,"code_log":13,"committed_log":25,"peak_rss_gib":7.45,"leaves":16,"claims_per_leaf":1,"guest_depth":5,"leaf_prove_total_s":47.129,"level_prove_s":[180.778,39.509,18.601,9.224,4.681],"wall_s":302.346}

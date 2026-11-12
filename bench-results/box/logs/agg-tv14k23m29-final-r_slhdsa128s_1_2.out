@@ -1,0 +1,2 @@
+{"kind":"r","scheme":"slhdsa128s","n":1,"run":0,"prove_s":22.6378,"verify_ms":38.195,"proof_bytes":347680,"deps":1,"max_claims":16,"code_log":14,"committed_log":23,"peak_rss_gib":13.87,"leaf_s":1.188}
+{"kind":"r","scheme":"slhdsa128s","n":1,"run":1,"prove_s":22.7833,"verify_ms":27.192,"proof_bytes":347680,"deps":1,"max_claims":16,"code_log":14,"committed_log":23,"peak_rss_gib":14.04,"leaf_s":1.188}

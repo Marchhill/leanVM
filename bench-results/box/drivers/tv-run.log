@@ -1,0 +1,71 @@
+d6820656 batch_leaf: checked constant tables, unrolled table builds and butterflies
+falcon512 n=1 rc=0 rss_kb=2111952
+falcon512 n=2 rc=0 rss_kb=3438304
+falcon512 n=4 rc=0 rss_kb=6828304
+falcon512 n=8 rc=0 rss_kb=13520464
+falcon512 n=16 rc=137 rss_kb=15765888
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+mldsa44 n=1 rc=0 rss_kb=6736680
+mldsa44 n=2 rc=0 rss_kb=13305896
+built tv12: EIP8288_TABLE_VK=1 EIP8288_GENERIC_CODE_LOG=12
+./run_tv.sh: line 16: results/logs/agg-tv12-r_null_1_3.out: No such file or directory
+grep: results/logs/agg-tv12-r_null_1_3.err: No such file or directory
+./run_tv.sh: line 18: results/agg.jsonl: No such file or directory
+grep: results/logs/agg-tv12-r_null_1_3.out: No such file or directory
+grep: results/logs/agg-tv12-r_null_1_3.err: No such file or directory
+tv12 r null 1 3 rc=1 rss_kb= 
+./run_tv.sh: line 16: results/logs/agg-tv12-r_null_16_3.out: No such file or directory
+grep: results/logs/agg-tv12-r_null_16_3.err: No such file or directory
+./run_tv.sh: line 18: results/agg.jsonl: No such file or directory
+grep: results/logs/agg-tv12-r_null_16_3.out: No such file or directory
+grep: results/logs/agg-tv12-r_null_16_3.err: No such file or directory
+tv12 r null 16 3 rc=1 rss_kb= 
+./run_tv.sh: line 16: results/logs/agg-tv12-merge_null_1_2.out: No such file or directory
+grep: results/logs/agg-tv12-merge_null_1_2.err: No such file or directory
+./run_tv.sh: line 18: results/agg.jsonl: No such file or directory
+grep: results/logs/agg-tv12-merge_null_1_2.out: No such file or directory
+grep: results/logs/agg-tv12-merge_null_1_2.err: No such file or directory
+tv12 merge null 1 2 rc=1 rss_kb= 
+./run_tv.sh: line 16: results/logs/agg-tv12-tree_null_16_1_1.out: No such file or directory
+grep: results/logs/agg-tv12-tree_null_16_1_1.err: No such file or directory
+./run_tv.sh: line 18: results/agg.jsonl: No such file or directory
+grep: results/logs/agg-tv12-tree_null_16_1_1.out: No such file or directory
+grep: results/logs/agg-tv12-tree_null_16_1_1.err: No such file or directory
+tv12 tree null 16 1 1 rc=1 rss_kb= 
+built tv13k25: EIP8288_TABLE_VK=1 EIP8288_GENERIC_CODE_LOG=13 EIP8288_GENERIC_COMMITTED_LOG=25
+./run_tv.sh: line 16: results/logs/agg-tv13k25-r_falcon512_1_3.out: No such file or directory
+grep: results/logs/agg-tv13k25-r_falcon512_1_3.err: No such file or directory
+./run_tv.sh: line 18: results/agg.jsonl: No such file or directory
+grep: results/logs/agg-tv13k25-r_falcon512_1_3.out: No such file or directory
+grep: results/logs/agg-tv13k25-r_falcon512_1_3.err: No such file or directory
+tv13k25 r falcon512 1 3 rc=1 rss_kb= 
+./run_tv.sh: line 16: results/logs/agg-tv13k25-merge_falcon512_1_2.out: No such file or directory
+grep: results/logs/agg-tv13k25-merge_falcon512_1_2.err: No such file or directory
+./run_tv.sh: line 18: results/agg.jsonl: No such file or directory
+grep: results/logs/agg-tv13k25-merge_falcon512_1_2.out: No such file or directory
+grep: results/logs/agg-tv13k25-merge_falcon512_1_2.err: No such file or directory
+tv13k25 merge falcon512 1 2 rc=1 rss_kb= 
+./run_tv.sh: line 16: results/logs/agg-tv13k25-tree_falcon512_16_1_1.out: No such file or directory
+grep: results/logs/agg-tv13k25-tree_falcon512_16_1_1.err: No such file or directory
+./run_tv.sh: line 18: results/agg.jsonl: No such file or directory
+grep: results/logs/agg-tv13k25-tree_falcon512_16_1_1.out: No such file or directory
+grep: results/logs/agg-tv13k25-tree_falcon512_16_1_1.err: No such file or directory
+tv13k25 tree falcon512 16 1 1 rc=1 rss_kb= 
+built tv14k27m29: EIP8288_TABLE_VK=1 EIP8288_GENERIC_CODE_LOG=14 EIP8288_GENERIC_COMMITTED_LOG=27 EIP8288_MIXED_COMMITTED_LOG=29 EIP8288_MIXED_BUS_LOG=28
+./run_tv.sh: line 16: results/logs/agg-tv14k27m29-r_mldsa44_1_2.out: No such file or directory
+grep: results/logs/agg-tv14k27m29-r_mldsa44_1_2.err: No such file or directory
+./run_tv.sh: line 18: results/agg.jsonl: No such file or directory
+grep: results/logs/agg-tv14k27m29-r_mldsa44_1_2.out: No such file or directory
+grep: results/logs/agg-tv14k27m29-r_mldsa44_1_2.err: No such file or directory
+tv14k27m29 r mldsa44 1 2 rc=1 rss_kb= 
+./run_tv.sh: line 16: results/logs/agg-tv12-tree_null_64_1_1.out: No such file or directory
+grep: results/logs/agg-tv12-tree_null_64_1_1.err: No such file or directory
+./run_tv.sh: line 18: results/agg.jsonl: No such file or directory
+grep: results/logs/agg-tv12-tree_null_64_1_1.out: No such file or directory
+grep: results/logs/agg-tv12-tree_null_64_1_1.err: No such file or directory
+tv12 tree null 64 1 1 rc=1 rss_kb= 
+tv-done

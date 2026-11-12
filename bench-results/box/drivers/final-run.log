@@ -1,0 +1,25 @@
+7885e986 batch_leaf: ML-DSA-44 leaf over messages of any length (pure, empty context), passkey-form vector
+null n=1 rc=0 rss_kb=62864
+null n=4 rc=0 rss_kb=63216
+null n=16 rc=0 rss_kb=64104
+null n=64 rc=0 rss_kb=72260
+null n=256 rc=0 rss_kb=92944
+null n=1024 rc=0 rss_kb=238060
+falcon512 n=1 rc=0 rss_kb=2108844
+falcon512 n=2 rc=0 rss_kb=3418916
+falcon512 n=4 rc=0 rss_kb=6746136
+falcon512 n=8 rc=0 rss_kb=13514680
+slhdsa128s n=1 rc=0 rss_kb=886420
+slhdsa128s n=4 rc=0 rss_kb=3489372
+slhdsa128s n=16 rc=0 rss_kb=13851820
+mldsa44 n=1 rc=0 rss_kb=6761368
+mldsa44 n=2 rc=0 rss_kb=13207392
+mldsa44m32 n=1 rc=0 rss_kb=6795372
+mldsa44m400 n=1 rc=0 rss_kb=6811192
+built tv13k25: EIP8288_TABLE_VK=1 EIP8288_GENERIC_CODE_LOG=13 EIP8288_GENERIC_COMMITTED_LOG=25
+tv13k25 r falcon512 1 3 rc=0 rss_kb=7779520 
+built tv14k23m29: EIP8288_TABLE_VK=1 EIP8288_GENERIC_CODE_LOG=14 EIP8288_GENERIC_COMMITTED_LOG=23 EIP8288_MIXED_COMMITTED_LOG=29 EIP8288_MIXED_BUS_LOG=28
+tv14k23m29 r slhdsa128s 1 2 rc=0 rss_kb=14725708 
+built tv14k27m29: EIP8288_TABLE_VK=1 EIP8288_GENERIC_CODE_LOG=14 EIP8288_GENERIC_COMMITTED_LOG=27 EIP8288_MIXED_COMMITTED_LOG=29 EIP8288_MIXED_BUS_LOG=28
+tv14k27m29 r mldsa44 1 2 rc=0 rss_kb=15000452 
+final-done

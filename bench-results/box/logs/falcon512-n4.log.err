@@ -1,21 +1,21 @@
 	Command being timed: "./target/release/batch_bench falcon512 4 3"
-	User time (seconds): 227.59
-	System time (seconds): 5.83
-	Percent of CPU this job got: 524%
-	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:44.48
+	User time (seconds): 212.43
+	System time (seconds): 3.68
+	Percent of CPU this job got: 528%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:40.89
 	Average shared text size (kbytes): 0
 	Average unshared data size (kbytes): 0
 	Average stack size (kbytes): 0
 	Average total size (kbytes): 0
-	Maximum resident set size (kbytes): 6980356
+	Maximum resident set size (kbytes): 6746136
 	Average resident set size (kbytes): 0
-	Major (requiring I/O) page faults: 3
-	Minor (reclaiming a frame) page faults: 1753786
-	Voluntary context switches: 2574
-	Involuntary context switches: 2611
+	Major (requiring I/O) page faults: 7
+	Minor (reclaiming a frame) page faults: 1702406
+	Voluntary context switches: 2689
+	Involuntary context switches: 3813
 	Swaps: 0
 	File system inputs: 0
-	File system outputs: 24
+	File system outputs: 16
 	Socket messages sent: 0
 	Socket messages received: 0
 	Signals delivered: 0
