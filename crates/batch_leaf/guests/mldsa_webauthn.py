@@ -1,15 +1,25 @@
 # ML-DSA-44 inside a WebAuthn assertion (COSE alg -48): the credential signs
 # authenticatorData || SHA-256(clientDataJSON), authenticatorData = rpIdHash || flags || signCount.
-# claim = Keccak-256(CLAIM_TAG || pk || challenge || rpIdHash || policy), policy the required
-# flags (UP | UV) as a 16-byte cell. Checked: clientDataJSON starts with
-# {"type":"webauthn.get","challenge":" followed by base64url(challenge) and a quote; the
-# rpIdHash and the flags. The rest of clientDataJSON (origin, ...) is hashed, not read.
+# claim = Keccak-256(CLAIM_TAG || pk || challenge || rpIdHash || policy || origin_len || origin),
+# policy the required flags (UP | UV) as a 16-byte cell, origin zero-padded to 64 bytes and its
+# length as a 16-byte cell. Checked, in WebAuthn's fixed serialization order: clientDataJSON
+# starts {"type":"webauthn.get","challenge":"<base64url(challenge)>","origin":"<origin>",
+# then "crossOrigin":false or no crossOrigin member, and no "topOrigin": member next; the rpIdHash and the flags.
+# Members after crossOrigin are hashed, not read.
 
 WA_TAG_0 = WA_TAG_0_PLACEHOLDER
 WA_TAG_1 = WA_TAG_1_PLACEHOLDER
 WA_POLICY = 5
 WA_PREFIX = WA_PREFIX_PLACEHOLDER
 WA_PREFIX_LEN = 36
+WA_ORIGIN_KEY = WA_ORIGIN_KEY_PLACEHOLDER
+WA_CROSS = WA_CROSS_PLACEHOLDER
+WA_TOP = WA_TOP_PLACEHOLDER
+WA_CROSS_KEY = WA_CROSS_KEY_PLACEHOLDER
+WA_ORIGIN_AT = 91
+WA_ORIGIN_MAX = 64
+WA_CLOSE = WA_CLOSE_PLACEHOLDER
+WA_COMMA = WA_COMMA_PLACEHOLDER
 WA_MAX_BLOCKS = 6
 WA_QUOTE = WA_QUOTE_PLACEHOLDER
 WA_B64_PAIRS = WA_B64_PAIRS_PLACEHOLDER
@@ -86,12 +96,6 @@ def verify_claim(ctx):
     put_cell(rp[1], cl * GEN ** 172)
     cl[GEN ** 174] = WA_POLICY
     cl[GEN ** 175] = 0
-    cl[GEN ** 176] = 1
-    for k in unroll(177, 186):
-        cl[GEN ** k] = 0
-    cl[GEN ** 186] = LANE_TOP
-    cls = HeapBuf(13 * 12)
-    claim = sponge(cl, 11, 17, cls)
 
     # clientDataJSON as nb padded SHA-256 blocks of byte g-powers.
     nb = hint_witness("wa_nb")
@@ -135,6 +139,62 @@ def verify_claim(ctx):
     assert c0 == ch[0]
     assert c1 == ch[1]
     assert pb[GEN ** (WA_PREFIX_LEN + 43)] == WA_QUOTE
+
+    # ,"origin":"<origin>" with the origin copied, zero-padded, into the claim.
+    for i in unroll(0, 11):
+        assert pb[GEN ** (WA_PREFIX_LEN + 44 + i)] == WA_ORIGIN_KEY[i]
+    lo = hint_witness("wa_origin_len")
+    assert log(lo) < WA_ORIGIN_MAX + 1
+    ob = HeapBuf(WA_ORIGIN_MAX)
+    hint_witness(ob[0:WA_ORIGIN_MAX], "wa_origin")
+    src = pb * GEN ** WA_ORIGIN_AT
+    for j in mul_range(1, lo):
+        assert ob[j] == src[j]
+    for j in mul_range(1, GEN ** WA_ORIGIN_MAX / lo):
+        assert ob[lo * j] == 1
+    after = src * lo
+    assert after[1] == WA_QUOTE
+    # Then "}", or "," and either "crossOrigin":false (then "}" or "," not before "topOrigin":)
+    # or, crossOrigin absent, a member other than "topOrigin":.
+    c1 = after[GEN]
+    if c1 == WA_CLOSE:
+        assert lg == lo * GEN ** (WA_ORIGIN_AT + 2)
+    else:
+        assert c1 == WA_COMMA
+        key = 0
+        for i in unroll(0, 14):
+            key = key + aux[GEN ** BT_OFF * after[GEN ** (2 + i)]] * COORD_BASIS[8 * i]
+        # A jump condition must be a 64-bit word, so branch on a hinted flag checked against key.
+        is_cross = hint_witness("wa_is_cross")
+        if is_cross == 1:
+            assert key == WA_CROSS_KEY
+            for i in unroll(15, 20):
+                assert after[GEN ** (1 + i)] == WA_CROSS[i]
+            nxt = after[GEN ** 21]
+            if nxt == WA_CLOSE:
+                assert lg == lo * GEN ** (WA_ORIGIN_AT + 22)
+            else:
+                assert nxt == WA_COMMA
+                pat = 0
+                for i in unroll(0, 12):
+                    pat = pat + aux[GEN ** BT_OFF * after[GEN ** (22 + i)]] * COORD_BASIS[8 * i]
+                assert pat != WA_TOP
+        else:
+            assert key != WA_CROSS_KEY
+            pat = 0
+            for i in unroll(0, 12):
+                pat = pat + aux[GEN ** BT_OFF * after[GEN ** (2 + i)]] * COORD_BASIS[8 * i]
+            assert pat != WA_TOP
+    cl[GEN ** 176] = aux[GEN ** BT_OFF * lo]
+    cl[GEN ** 177] = 0
+    for w in unroll(0, 8):
+        lanew = 0
+        for k in unroll(0, 8):
+            lanew = lanew + aux[GEN ** BT_OFF * ob[GEN ** (8 * w + k)]] * COORD_BASIS[8 * k]
+        cl[GEN ** (178 + w)] = lanew
+    cl[GEN ** 186] = LANE_TOP + 1
+    cls = HeapBuf(13 * 12)
+    claim = sponge(cl, 11, 17, cls)
 
     # SHA-256(clientDataJSON)
     kt = wa * GEN ** WA_KT

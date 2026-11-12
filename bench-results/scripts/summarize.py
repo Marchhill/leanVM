@@ -10,7 +10,9 @@ for f in glob.glob(os.path.join(root, '*.jsonl')):
         if 'kind' in r:
             agg.setdefault((r['variant'], r['kind'], r['scheme'], r['n']), []).append(r)
         else:
-            leaf.setdefault((r['scheme'], r['n']), []).append(r)
+            # versioned files (e.g. falcon512-v1.jsonl) keep their own label
+            label = os.path.basename(f)[:-len('.jsonl')]
+            leaf.setdefault((label, r['n']), []).append(r)
 out = open(os.path.join(root, '..', 'summary.csv'), 'w')
 out.write('table,scheme,n,variant,kind,runs,prove_s_median,verify_ms_median,proof_bytes,base_cycles,padded_cycles,peak_rss_gib,extra\n')
 for (s, n), rs in sorted(leaf.items()):

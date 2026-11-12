@@ -21,6 +21,17 @@ const POLICY: u8 = 0x05;
 
 pub struct MlDsa44WebAuthn;
 
+const ORIGIN_AT: usize = 91;
+const ORIGIN_MAX: usize = 64;
+
+/// The origin member's value: clientDataJSON byte 91 up to the next quote (at most 64 bytes).
+fn origin(cdj: &[u8]) -> &[u8] {
+    assert_eq!(&cdj[80..ORIGIN_AT], br#","origin":""#);
+    let end = ORIGIN_AT + cdj[ORIGIN_AT..].iter().position(|&b| b == b'"').expect("origin closes");
+    assert!(end - ORIGIN_AT <= ORIGIN_MAX);
+    &cdj[ORIGIN_AT..end]
+}
+
 pub struct WebAuthnItem {
     pub pk: [u8; ml_dsa_44::PK_LEN],
     pub challenge: [u8; 32],
@@ -61,6 +72,15 @@ fn signed_message(item: &WebAuthnItem) -> Vec<u8> {
 
 /// `n` credentials, each asserting its own challenge for one relying party.
 pub fn items(n: usize) -> Vec<WebAuthnItem> {
+    items_with(
+        n,
+        &format!("https://{RP_ID}"),
+        r#","crossOrigin":false,"other_keys_can_be_added_here":"do not compare clientDataJSON against a template. See https://goo.gl/yabPex""#,
+    )
+}
+
+/// As [`items`], with the origin and the members after it given.
+pub fn items_with(n: usize, origin: &str, tail: &str) -> Vec<WebAuthnItem> {
     (0..n)
         .map(|i| {
             let mut seed = [0x77u8; 32];
@@ -69,7 +89,7 @@ pub fn items(n: usize) -> Vec<WebAuthnItem> {
             let mut challenge = [0xc4u8; 32];
             challenge[..8].copy_from_slice(&(i as u64).to_le_bytes());
             let cdj = format!(
-                r#"{{"type":"webauthn.get","challenge":"{}","origin":"https://{RP_ID}","crossOrigin":false,"other_keys_can_be_added_here":"do not compare clientDataJSON against a template. See https://goo.gl/yabPex"}}"#,
+                r#"{{"type":"webauthn.get","challenge":"{}","origin":"{origin}"{tail}}}"#,
                 base64url(&challenge)
             );
             let mut item = WebAuthnItem {
@@ -80,7 +100,9 @@ pub fn items(n: usize) -> Vec<WebAuthnItem> {
                 client_data_json: cdj.into_bytes(),
                 sig: [0; ml_dsa_44::SIG_LEN],
             };
-            item.sig = sk.try_sign_with_seed(&seed, &signed_message(&item), &[]).expect("signs");
+            item.sig = sk
+                .try_sign_with_seed(&seed, &signed_message(&item), &[])
+                .expect("signs");
             assert!(pk.verify(&signed_message(&item), &item.sig, &[]));
             item
         })
@@ -122,6 +144,17 @@ impl Scheme for MlDsa44WebAuthn {
             flds(&PREFIX.iter().map(|&b| count(b as usize)).collect::<Vec<_>>()),
         );
         ps.insert("WA_QUOTE".into(), crate::f192_literal(count(b'"' as usize)));
+        let gp = |b: &[u8]| flds(&b.iter().map(|&x| count(x as usize)).collect::<Vec<_>>());
+        ps.insert("WA_ORIGIN_KEY".into(), gp(br#","origin":""#));
+        ps.insert("WA_CROSS".into(), gp(br#","crossOrigin":false"#));
+        let mut top = [0u8; 16];
+        top[..12].copy_from_slice(br#""topOrigin":"#);
+        ps.insert("WA_TOP".into(), crate::f192_literal(cell(&top)));
+        let mut cross = [0u8; 16];
+        cross[..14].copy_from_slice(br#""crossOrigin":"#);
+        ps.insert("WA_CROSS_KEY".into(), crate::f192_literal(cell(&cross)));
+        ps.insert("WA_CLOSE".into(), crate::f192_literal(count(b'}' as usize)));
+        ps.insert("WA_COMMA".into(), crate::f192_literal(count(b',' as usize)));
         crate::checked_placeholders(ps, "WA_B64", &b64_tables());
         crate::checked_placeholders(ps, "WA_KT", &kt_cells());
         ps.insert("SHA_IVG".into(), crate::sha256::gpow_list(&crate::sha256::IV));
@@ -141,6 +174,13 @@ impl Scheme for MlDsa44WebAuthn {
         let mut policy = [0u8; 16];
         policy[0] = POLICY;
         b.extend_from_slice(&policy);
+        let o = origin(&item.client_data_json);
+        let mut len = [0u8; 16];
+        len[0] = o.len() as u8;
+        b.extend_from_slice(&len);
+        let mut padded = [0u8; ORIGIN_MAX];
+        padded[..o.len()].copy_from_slice(o);
+        b.extend_from_slice(&padded);
         primitives::keccak::keccak256(&b)
     }
 
@@ -172,6 +212,21 @@ impl Scheme for MlDsa44WebAuthn {
         }
         let digest: Vec<u8> = st.iter().flat_map(|w| w.to_be_bytes()).collect();
         assert_eq!(digest[..], sha2::Sha256::digest(cdj)[..]);
+        let o = origin(cdj);
+        hints.push("wa_origin_len", vec![count(o.len())]);
+        let rest = &cdj[ORIGIN_AT + o.len() + 1..];
+        if rest[0] == b',' {
+            hints.push(
+                "wa_is_cross",
+                vec![crate::mldsa::bit(rest[1..].starts_with(br#""crossOrigin":"#))],
+            );
+        }
+        hints.push(
+            "wa_origin",
+            (0..ORIGIN_MAX)
+                .map(|j| count(o.get(j).copied().unwrap_or(0) as usize))
+                .collect(),
+        );
         push_bytes(hints, &item.rp_id_hash);
         hints.push(
             "wa_flags",
@@ -256,10 +311,50 @@ mod soundness {
             ("UV flag", flip("wa_flags", 0, 2, &one)),
             ("sign count", flip("wa_count", 0, 3, &next)),
             ("sha carry", flip("sha_c", 50, 0, &next)),
+            ("origin length", flip("wa_origin_len", 0, 0, &next)),
+            ("origin byte", flip("wa_origin", 0, 9, &next)),
+            ("crossOrigin flag", flip("wa_is_cross", 0, 0, &one)),
         ];
         for (label, h) in cases {
             assert!(!proves(&program, &h, pi), "{label} mutation still proves");
             println!("{label}: rejected");
+        }
+        // Honest signatures over clientDataJSON the policy refuses, and a claim naming another origin.
+        let origin = format!("https://{RP_ID}");
+        for (label, tail) in [
+            (
+                "crossOrigin true",
+                r#","crossOrigin":true,"topOrigin":"https://evil.example""#,
+            ),
+            (
+                "topOrigin present",
+                r#","crossOrigin":false,"topOrigin":"https://evil.example""#,
+            ),
+            (
+                "topOrigin without crossOrigin",
+                r#","topOrigin":"https://evil.example""#,
+            ),
+        ] {
+            let (_, h, pi, _) = witness::<MlDsa44WebAuthn>(items_with(1, &origin, tail));
+            assert!(!proves(&program, &h, pi), "{label} still proves");
+            println!("{label}: rejected");
+        }
+        let (_, h, _, _) = witness::<MlDsa44WebAuthn>(items(1));
+        let other = items_with(1, "https://evil.example", r#","crossOrigin":false"#);
+        let wrong_pi = crate::public_input(&crate::batch_hash(&[MlDsa44WebAuthn::claim(&other[0])]));
+        assert!(
+            !proves(&program, &h, wrong_pi),
+            "claim with another origin still proves"
+        );
+        println!("claim with another origin: rejected");
+        let (_, h, pi, _) = witness::<MlDsa44WebAuthn>(items_with(1, &origin, r#","crossOrigin":false"#));
+        assert!(
+            proves(&program, &h, pi),
+            "crossOrigin false as the last member must prove"
+        );
+        for tail in ["", r#","other_keys_can_be_added_here":"x""#] {
+            let (_, h, pi, _) = witness::<MlDsa44WebAuthn>(items_with(1, &origin, tail));
+            assert!(proves(&program, &h, pi), "an absent crossOrigin must prove ({tail})");
         }
     }
 }
