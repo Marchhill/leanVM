@@ -432,6 +432,68 @@ mod tests {
         assert!(rejects(&over, None, pack_hash_state(&deps_hash(&over))));
     }
 
+    /// The key preimage decoder rejects an opcode tag or DEREF mode past its dispatch arms instead of leaving the
+    /// instruction's table columns to the prover.
+    #[test]
+    fn key_decoder_rejects_out_of_range_opcode_and_deref_mode() {
+        let helpers = runtime_guest_source(19);
+        let helpers = format!(
+            "{}{}",
+            &helpers[..helpers.find("\ndef main():").unwrap()],
+            program_seed_source()
+        );
+        // The guest's own per-row decode, lifted out of mixed_generic.
+        let guest = include_str!("../guests/eip8288_mixed.py");
+        let start = guest.find("        opcode = g_power_of_word(instruction[1]").unwrap();
+        let end = start + guest[start..].find("        for column in unroll(0, 12):").unwrap();
+        let decode: String = guest[start..end]
+            .lines()
+            .map(|line| format!("{}\n", &line[4..]))
+            .collect();
+        let decoder = |forged: bool| {
+            let columns = if forged {
+                "    hint_witness(c[0:12], \"columns\")\n"
+            } else {
+                ""
+            };
+            compile(
+                &lean_compiler::parse(&format!(
+                    "{helpers}\ndef main():\n    logs, squares = exponent_tables()\n    powers = HeapBuf(768)\n    for i in unroll(0, 256):\n        powers[GEN ** i] = i\n        powers[GEN ** (256 + i)] = GEN ** i\n        powers[GEN ** (512 + i)] = GEN ** (256 * i)\n    instruction = HeapBuf(45)\n    hint_witness(instruction[0:45], \"ins\")\n{decode}{columns}    p = 1\n    p[1] = c[1]\n    p[GEN] = c[GEN ** 11]\n    return\n"
+                ))
+                .unwrap(),
+            )
+        };
+        let run = |forged: bool, instruction: [u8; 45], operand_indexes: usize, columns: [F192; 12]| {
+            let mut guest = decoder(forged);
+            guest.set_witness("ins", vec![instruction.iter().map(|&b| integer(b as usize)).collect()]);
+            guest.set_witness("operand_index", vec![vec![gcount(0)]; operand_indexes]);
+            if forged {
+                guest.set_witness("columns", vec![columns.to_vec()]);
+            }
+            let pi = [columns[0], columns[11]];
+            std::panic::catch_unwind(|| guest.execute(pi)).is_ok()
+        };
+        let mut columns = [F192::ZERO; 12];
+        // XOR of operands 0, 0, 0 and DEREF of 0, 0, 0 in mode 2 decode honestly.
+        columns[0] = F192::from(g_pow(0));
+        assert!(run(false, [0; 45], 6, columns));
+        let mut deref = [0; 45];
+        deref[0] = 3;
+        deref[13] = 2;
+        columns[0] = F192::from(g_pow(3));
+        assert!(run(false, deref, 6, columns));
+        // Tag 7 and DEREF mode 3 have no arm; their columns cannot be supplied instead.
+        let mut tag7 = [0; 45];
+        tag7[0] = 7;
+        columns[0] = F192::from(g_pow(2));
+        columns[11] = F192::ONE;
+        assert!(!run(true, tag7, 0, columns));
+        deref[13] = 3;
+        columns[0] = F192::from(g_pow(3));
+        columns[11] = F192::ZERO;
+        assert!(!run(true, deref, 6, columns));
+    }
+
     #[test]
     fn discard_keeps_the_same_data_and_key_under_the_other_scheme() {
         let helpers = include_str!("../guests/eip8288_mixed.py");

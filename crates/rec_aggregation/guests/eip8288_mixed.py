@@ -79,7 +79,9 @@ def columns(op: Const, raw, at, squares, powers, c):
     elif op == 3:
         for j in unroll(0, 3):
             c[GEN ** (j + 1)] = operand_power(raw * at, 1 + 4 * j, 4, powers)
-        mode_checked = match(log(g_power_of_word(a[3], squares, 2)), range(0, 3), lambda mode: mode_flags(mode, c))
+        mode_g = g_power_of_word(a[3], squares, 2)
+        assert log(mode_g) < 3
+        mode_checked = match(log(mode_g), range(0, 3), lambda mode: mode_flags(mode, c))
         for j in unroll(0, 3):
             assert k[j] == 0
         assert md == 0
@@ -225,6 +227,8 @@ def mixed_generic(logs, squares, fresh):
     for row in mul_range(1, size_g):
         instruction = raw * GEN ** 34 * row ** 45
         opcode = g_power_of_word(instruction[1], squares, 3)
+        # A match does not bound its scrutinee, so the opcode is range-checked to the arm count first.
+        assert log(opcode) < 7
         c = HeapBuf(12)
         done = match(log(opcode), range(0, 7), lambda op: columns(op, instruction, 1, squares, powers, c))
         for column in unroll(0, 12):
