@@ -35,6 +35,31 @@ fn run<S: Scheme>(n: usize, repeat: usize, items: impl Fn(usize) -> Vec<S::Item>
     }
 }
 
+/// `k` chained Keccak-f permutations, each loaded from the heap as an absorb would.
+fn keccak(k: usize, repeat: usize) {
+    let src = format!(
+        "def main():\n    st = HeapBuf(13 * {})\n    for c in unroll(0, 13):\n        st[GEN ** c] = 0\n    for i in mul_range(1, GEN ** {k}):\n        a = StackBuf(13)\n        cur = st * i ** 13\n        for c in unroll(0, 13):\n            a[c] = cur[GEN ** c]\n        keccak_permute(a, (st * (i * GEN) ** 13)[0:13])\n    return\n",
+        k + 1
+    );
+    let program = lean_compiler::compile(&lean_compiler::parse(&src).expect("parse"));
+    let pi = [primitives::field::F192::ZERO; 2];
+    let _ = lean_vm::cpu::prove(&program, pi, 1).expect("proves");
+    for run in 0..repeat {
+        let t = std::time::Instant::now();
+        let (proof, s) = lean_vm::cpu::prove(&program, pi, 1).expect("proves");
+        let prove_s = t.elapsed().as_secs_f64();
+        let t = std::time::Instant::now();
+        lean_vm::cpu::verify(&program, &pi, &proof).expect("verifies");
+        println!(
+            "{{\"scheme\":\"keccakf\",\"n\":{k},\"run\":{run},\"prove_s\":{prove_s:.4},\"verify_ms\":{:.3},\"base_counts\":{:?},\"cycles\":{},\"committed\":{}}}",
+            t.elapsed().as_secs_f64() * 1e3,
+            s.base_counts,
+            s.cycles,
+            s.committed
+        );
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let scheme = args.get(1).expect("scheme").as_str();
@@ -42,6 +67,7 @@ fn main() {
     let repeat: usize = args.get(3).map_or(1, |r| r.parse().expect("repeat"));
     lean_vm::init_prover();
     match scheme {
+        "keccakf" => keccak(n, repeat),
         "xmss" => run::<batch_leaf::xmss_leaf::Xmss>(n, repeat, batch_leaf::xmss_leaf::items),
         "mldsa44" => run::<batch_leaf::mldsa::MlDsa44>(n, repeat, batch_leaf::mldsa::items),
         "falcon512" => run::<batch_leaf::falcon::Falcon512>(n, repeat, batch_leaf::falcon::items),
