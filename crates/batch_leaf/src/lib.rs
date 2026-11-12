@@ -13,6 +13,7 @@ pub mod mq;
 #[cfg(test)]
 mod mq_guest;
 pub mod null_leaf;
+pub mod sha256;
 pub mod xmss_leaf;
 
 use std::collections::BTreeMap;

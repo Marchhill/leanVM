@@ -27,3 +27,4 @@ rand.workspace = true
 fips204 = { version = "0.4", default-features = false, features = ["default-rng", "ml-dsa-44"] }
 sha3 = "0.10"
 tide-fn-dsa = "0.4"
+sha2 = { version = "0.10", features = ["compress"] }
