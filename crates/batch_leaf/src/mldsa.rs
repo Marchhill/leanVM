@@ -454,7 +454,8 @@ mod tests {
     #[ignore]
     fn leaf_proves_edge_lengths() {
         let program = crate::program::<MlDsa44>();
-        for len in [0, 5, 6, 300, MAX_MSG] {
+        // 20 and 150 put the claim's padding in the last lane of a block; 69 does it for mu.
+        for len in [0, 5, 6, 20, 69, 150, 300, MAX_MSG] {
             let m = crate::prove_leaf::<MlDsa44>(&program, items_len(1, len));
             println!("len {len}: {} cycles", m.stats.base_counts.iter().sum::<usize>());
         }
@@ -508,7 +509,10 @@ mod soundness {
                 "message tail",
                 flip("ml_mpart", 0, 0, &|x: F192| x + F192::new(1 << 60, 0, 0)),
             ),
-            ("message length", flip("ml_mlen", 0, 1, &next)),
+            ("message length r", flip("ml_mlen", 0, 1, &next)),
+            ("message length nq", flip("ml_mlen", 0, 0, &next)),
+            ("claim block split", flip("sv_split", 0, 1, &next)),
+            ("mu block split", flip("sv_split", 1, 0, &next)),
             ("pk lane", flip("ml_pk", 0, 100, &one)),
             ("c~ lane", flip("ml_ctilde", 0, 0, &one)),
             ("z sign", flip("ml_z", 5, 2, &one)),

@@ -12,6 +12,28 @@ pub mod mldsa;
 pub mod mq;
 #[cfg(test)]
 mod mq_guest;
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    #[should_panic(expected = "conflicting definitions of global constant")]
+    fn conflicting_constants_panic() {
+        struct Clash;
+        impl crate::Scheme for Clash {
+            type Item = crate::Claim;
+            const NAME: &'static str = "clash";
+            fn source() -> String {
+                "RATE_LANES = 16\n".to_string() + include_str!("../guests/null_claim.py")
+            }
+            fn placeholders(_: &mut std::collections::BTreeMap<String, String>) {}
+            fn claim(item: &crate::Claim) -> crate::Claim {
+                *item
+            }
+            fn push_hints(_: &crate::Claim, _: &mut crate::Hints) {}
+        }
+        crate::program::<Clash>();
+    }
+}
 pub mod null_leaf;
 pub mod sha256;
 pub mod slhdsa;
@@ -150,8 +172,9 @@ pub fn program<S: Scheme>() -> Program {
     common_placeholders(&mut ps);
     S::placeholders(&mut ps);
     let ps: BTreeMap<String, String> = ps.into_iter().map(|(k, v)| (format!("{k}_PLACEHOLDER"), v)).collect();
-    // Global constants must precede every function: hoist them, the first definition winning.
-    let mut seen = std::collections::BTreeSet::new();
+    // Global constants must precede every function: hoist them. A constant defined twice must
+    // be defined identically (comments aside); a conflicting redefinition is a bug.
+    let mut seen = BTreeMap::<String, String>::new();
     let (mut constants, mut body) = (String::new(), String::new());
     for l in source.lines() {
         let is_constant = l.split_once(" = ").is_some_and(|(name, _)| {
@@ -163,9 +186,17 @@ pub fn program<S: Scheme>() -> Program {
         if !is_constant {
             body.push_str(l);
             body.push('\n');
-        } else if seen.insert(l.split_once(" = ").unwrap().0.to_string()) {
-            constants.push_str(l);
-            constants.push('\n');
+        } else {
+            let (name, value) = l.split_once(" = ").unwrap();
+            let value = value.split('#').next().unwrap().trim().to_string();
+            match seen.get(name) {
+                None => {
+                    seen.insert(name.to_string(), value);
+                    constants.push_str(l);
+                    constants.push('\n');
+                }
+                Some(first) => assert_eq!(first, &value, "conflicting definitions of global constant {name}"),
+            }
         }
     }
     let source = format!("{constants}\n{body}");
