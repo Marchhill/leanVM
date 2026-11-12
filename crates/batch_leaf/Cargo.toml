@@ -28,3 +28,4 @@ fips204 = { version = "0.4", default-features = false, features = ["default-rng"
 sha3 = "0.10"
 tide-fn-dsa = "0.4"
 sha2 = { version = "0.10", features = ["compress"] }
+fips205 = { version = "0.4", default-features = false, features = ["default-rng", "slh_dsa_shake_128s"] }
