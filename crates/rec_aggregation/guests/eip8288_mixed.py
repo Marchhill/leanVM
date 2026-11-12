@@ -273,14 +273,73 @@ def mixed_generic(logs, squares, fresh):
     fresh[GEN ** FRESH_BC_VALUE] = 0
     for i in unroll(FRESH_FLOCK, DEFER_SIZE):
         fresh[GEN ** i] = actual[GEN ** i]
-    claim = HeapBuf(6)
-    claim[1] = 0
-    claim[GEN] = f192(0, 1224979098644774912, 0)
-    claim[GEN ** 2] = data[0]
-    claim[GEN ** 3] = data[1]
-    claim[GEN ** 4] = vk[0]
-    claim[GEN ** 5] = vk[1]
-    return claim, data[0], data[1]
+    claims, count_g = mixed_batch(data[0], data[1], vk[0], vk[1], squares)
+    return claims, count_g, data[0], data[1]
+
+
+def batch_cell_bytes(value, output, powers, table):
+    hint_witness(output[0:16], "cell_bytes")
+    reconstructed = 0
+    for i in unroll(0, 16):
+        index = hint_witness("cell_index")
+        assert log(index) < 256
+        byte = output[GEN ** i]
+        assert table[index] == byte
+        powers[GEN ** i] = index
+        reconstructed += byte * COORD_BASIS[8 * i]
+    assert reconstructed == value
+    return
+
+
+def batch_increasing(prev, cur):
+    # Lexicographic order of two 32-byte claims, compared byte by byte through each byte's g-power.
+    equal = StackBuf(33)
+    equal[0] = 1
+    for j in unroll(0, 32):
+        if equal[j] == 1:
+            if prev[GEN ** j] == cur[GEN ** j]:
+                equal[j + 1] = 1
+            else:
+                step = cur[GEN ** j] / prev[GEN ** j]
+                assert log(step) < 256
+                equal[j + 1] = 0
+        else:
+            equal[j + 1] = 0
+    assert equal[32] == 0
+    return
+
+
+def mixed_batch(data0, data1, vk0, vk1, squares):
+    # EIP-8288 batch leaf: the proof's public input is Keccak-256(BATCH_DOMAIN || claims) over a
+    # nonempty, strictly increasing claim list, bounded before hashing; each claim is a leanSTARK triple.
+    count_g = hint_witness("batch_count")
+    assert log(count_g / GEN) < MAX_CLAIMS_PER_BATCH_LEAF
+    byte_table = HeapBuf(256)
+    for i in unroll(0, 256):
+        byte_table[GEN ** i] = i
+    length_g = GEN ** 16 * count_g ** 32
+    raw = HeapBuf(length_g * GEN ** 136)
+    for i in unroll(0, 16):
+        raw[GEN ** i] = BATCH_DOMAIN[i]
+    order = HeapBuf(count_g ** 32)
+    claims = HeapBuf(count_g ** 6)
+    for row in mul_range(1, count_g):
+        claim = claims * row ** 6
+        hint_witness(claim[2:4], "batch_claim")
+        claim[1] = 0
+        claim[GEN] = f192(0, 1224979098644774912, 0)
+        claim[GEN ** 4] = vk0
+        claim[GEN ** 5] = vk1
+        bytes = raw * GEN ** 16 * row ** 32
+        powers = order * row ** 32
+        batch_cell_bytes(claim[GEN ** 2], bytes, powers, byte_table)
+        batch_cell_bytes(claim[GEN ** 3], bytes * GEN ** 16, powers * GEN ** 16, byte_table)
+    for row in mul_range(1, count_g / GEN):
+        batch_increasing(order * row ** 32, order * (row * GEN) ** 32)
+    digest = mixed_keccak(raw, length_g, squares)
+    assert digest[0] == data0
+    assert digest[1] == data1
+    return claims, count_g
 
 
 def mixed_list_digest(entries, count_g, powers):
@@ -319,7 +378,7 @@ def mixed_dependencies(n_g, powers):
     ns_g = split[0]
     nt_g = split[1]
     assert log(ns_g) < MAX_MIXED_DEPENDENCIES + 1
-    assert log(nt_g) < MAX_MIXED_GENERIC + 1
+    assert log(nt_g) < MAX_MIXED_DEPENDENCIES + 1
     assert ns_g * nt_g == n_g
     entries = HeapBuf(n_g ** 6)
     for row in mul_range(1, ns_g):
@@ -434,11 +493,15 @@ def main():
     generic_marks = HeapBuf(ng_g * GEN)
     generic_marks[1] = raw_marks[ns_g]
     for generic in mul_range(1, ng_g):
-        claim, pi0, pi1 = mixed_generic(logs, squares, fresh * generic ** DEFER_SIZE)
+        claims, count_g, pi0, pi1 = mixed_generic(logs, squares, fresh * generic ** DEFER_SIZE)
         inputs[generic ** 2] = pi0
         inputs[generic ** 2 * GEN] = pi1
         mixed_leaf(carried * generic ** DEFER_STMT_CELLS, leaf_values)
-        generic_marks[generic * GEN] = mixed_cover(claim, selected, n_g, covered, generic_marks[generic])
+        claim_marks = HeapBuf(count_g * GEN)
+        claim_marks[1] = generic_marks[generic]
+        for row in mul_range(1, count_g):
+            claim_marks[row * GEN] = mixed_cover(claims * row ** 6, selected, n_g, covered, claim_marks[row])
+        generic_marks[generic * GEN] = claim_marks[count_g]
     child_marks = HeapBuf(nc_g * GEN)
     child_marks[1] = generic_marks[ng_g]
     for child in mul_range(1, nc_g):

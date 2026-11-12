@@ -6,7 +6,8 @@ use super::*;
 pub type Dependency = [u8; 96];
 
 pub const MAX_DEPENDENCIES: usize = 256;
-pub const MAX_GENERIC_DEPENDENCIES: usize = 16;
+/// EIP-8288 `MAX_CLAIMS_PER_BATCH_LEAF` (TBD in the EIP), a guest constant: changing it changes `AGGREGATED_VK`.
+pub const MAX_CLAIMS_PER_BATCH_LEAF: usize = 16;
 pub const MAX_GENERIC_BYTECODE_LOG: usize = 11;
 pub const MAX_GENERIC_COMMITTED_LOG: usize = 22;
 pub const MAX_GENERIC_BUS_LOG: usize = 22;
@@ -14,11 +15,35 @@ pub const MAX_MIXED_COMMITTED_LOG: usize = 27;
 pub const MAX_MIXED_BUS_LOG: usize = 26;
 pub const LOG_INV_RATE: usize = 1;
 
-/// A generic CPU proof and the program/public input it claims to execute.
+/// An EIP-8288 batch leaf: a generic CPU proof whose public input is `batch_hash(claims)`.
+///
+/// A direct leanSTARK proof of one `data_hash` is the singleton leaf `[data_hash]`.
 pub struct GenericInput<'a> {
     pub program: &'a Program,
     pub proof: &'a lean_vm::cpu::Proof,
-    pub data: [u8; 32],
+    pub claims: &'a [[u8; 32]],
+}
+
+/// Domain tag opening the EIP-8288 `get_batch_hash` preimage.
+pub const BATCH_DOMAIN: [u8; 16] = *b"EIP8288:batch:v1";
+
+/// EIP-8288 `get_batch_hash`: Keccak-256 of `BATCH_DOMAIN` and the concatenated claims.
+pub fn batch_hash(claims: &[[u8; 32]]) -> [u8; 32] {
+    primitives::keccak::keccak256(&batch_preimage(claims))
+}
+
+fn batch_preimage(claims: &[[u8; 32]]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(BATCH_DOMAIN.len() + 32 * claims.len());
+    bytes.extend_from_slice(&BATCH_DOMAIN);
+    for claim in claims {
+        bytes.extend_from_slice(claim);
+    }
+    bytes
+}
+
+/// Whether `claims` is a batch leaf's claim list: nonempty, bounded and strictly increasing.
+pub fn valid_batch_claims(claims: &[[u8; 32]]) -> bool {
+    (1..=MAX_CLAIMS_PER_BATCH_LEAF).contains(&claims.len()) && claims.windows(2).all(|pair| pair[0] < pair[1])
 }
 
 #[derive(Debug)]
@@ -49,7 +74,6 @@ impl std::error::Error for MixedError {}
 
 fn check_dependencies(deps: &[Dependency]) -> Result<(), MixedError> {
     if deps.len() > MAX_DEPENDENCIES
-        || deps.iter().filter(|dep| dep[31] == 0x11).count() > MAX_GENERIC_DEPENDENCIES
         || deps
             .iter()
             .any(|dep| dep[..31] != [0; 31] || !matches!(dep[31], 0x10 | 0x11))
@@ -122,11 +146,146 @@ mod tests {
         );
     }
 
+    /// A verifier program under its own key that accepts any statement; `variant` changes the key.
+    fn any_statement_program(variant: usize) -> Program {
+        compile(&lean_compiler::parse(&format!("def main():\n    x = HeapBuf(2)\n    x[1] = {variant}\n    x[GEN] = x[1] * x[1]\n    return\n")).unwrap())
+    }
+
+    fn leaf_input<'a>(
+        program: &'a Program,
+        proof: &'a lean_vm::cpu::Proof,
+        claims: &'a [[u8; 32]],
+    ) -> GenericInput<'a> {
+        GenericInput { program, proof, claims }
+    }
+
+    /// EIP-8288 Test Cases 2 and 12 on genuine proofs: batch leaves, singleton trees, keys, the per-leaf bound and discards.
+    #[test]
+    #[ignore]
+    fn batch_leaves_and_singleton_trees_prove_the_same_dependencies() {
+        let program = any_statement_program(1);
+        let other_program = any_statement_program(2);
+        let key = generic_verification_key(&program).unwrap();
+        assert_ne!(key, generic_verification_key(&other_program).unwrap());
+        let leaf_proof =
+            |program: &Program, claims: &[[u8; 32]]| prove(program, pack_hash_state(&batch_hash(claims)), 1).unwrap().0;
+        let deps =
+            |claims: &[[u8; 32]]| -> Vec<Dependency> { claims.iter().map(|claim| dep(0x11, *claim, key)).collect() };
+        let leaf = |claims: &[[u8; 32]], selected: &[[u8; 32]]| {
+            let proof = leaf_proof(&program, claims);
+            let node = aggregate_mixed(
+                &[],
+                &[],
+                &[GenericInput {
+                    program: &program,
+                    proof: &proof,
+                    claims,
+                }],
+                &deps(selected),
+                1,
+            )
+            .unwrap();
+            node.verify().unwrap();
+            node
+        };
+        let parent = |children: &[MixedProof], selected: &[[u8; 32]]| {
+            let node = aggregate_mixed(children, &[], &[], &deps(selected), 1).unwrap();
+            node.verify().unwrap();
+            node
+        };
+        let (a, b, c) = ([0xa0; 32], [0xb0; 32], [0xc0; 32]);
+        let abc = deps_hash(&deps(&[a, b, c]));
+
+        // A direct batch and a singleton tree prove the same digest, as does an overlapping grouping.
+        let direct = leaf(&[a, b, c], &[a, b, c]);
+        let tree = parent(
+            &[parent(&[leaf(&[a], &[a]), leaf(&[b], &[b])], &[a, b]), leaf(&[c], &[c])],
+            &[a, b, c],
+        );
+        let ab = leaf(&[a, b], &[a, b]);
+        let bc = leaf(&[b, c], &[b, c]);
+        let overlapping = parent(&[bc.clone(), ab.clone()], &[a, b, c]);
+        for proof in [&direct, &tree, &overlapping] {
+            verify_mixed_deps(&abc, &proof.to_bytes_without_deps()).unwrap();
+        }
+
+        // Union {a, b} and {b, c}, discard a; a proof pruned to {a} cannot restore b.
+        let retained = parent(&[ab.clone(), bc], &[b, c]);
+        verify_mixed_deps(&deps_hash(&deps(&[b, c])), &retained.to_bytes_without_deps()).unwrap();
+        let pruned = parent(std::slice::from_ref(&ab), &[a]);
+        assert!(aggregate_mixed(&[pruned], &[], &[], &deps(&[a, b]), 1).is_err());
+
+        // The leaf binds its key, its claim list and the batch statement rather than a bare data_hash.
+        let proof = leaf_proof(&program, &[a, b]);
+        assert!(
+            aggregate_mixed(
+                &[],
+                &[],
+                &[leaf_input(&other_program, &proof, &[a, b])],
+                &[dep(0x11, a, key)],
+                1
+            )
+            .is_err()
+        );
+        let other_key = generic_verification_key(&other_program).unwrap();
+        assert!(
+            aggregate_mixed(
+                &[],
+                &[],
+                &[leaf_input(&other_program, &proof, &[a, b])],
+                &[dep(0x11, a, other_key)],
+                1
+            )
+            .is_err()
+        );
+        for claims in [&[a][..], &[a, c], &[b, a], &[a, a], &[]] {
+            assert!(
+                aggregate_mixed(
+                    &[],
+                    &[],
+                    &[leaf_input(&program, &proof, claims)],
+                    &deps(&claims[..claims.len().min(1)]),
+                    1
+                )
+                .is_err()
+            );
+        }
+        let bare = prove(&program, pack_hash_state(&a), 1).unwrap().0;
+        assert!(
+            aggregate_mixed(
+                &[],
+                &[],
+                &[GenericInput {
+                    program: &program,
+                    proof: &bare,
+                    claims: &[a]
+                }],
+                &deps(&[a]),
+                1
+            )
+            .is_err()
+        );
+
+        // MAX_CLAIMS_PER_BATCH_LEAF claims fit one leaf, one more does not; a recursive union may exceed it.
+        let full: Vec<[u8; 32]> = (1..=MAX_CLAIMS_PER_BATCH_LEAF as u8 + 1).map(|i| [i; 32]).collect();
+        let (max, over) = (&full[..MAX_CLAIMS_PER_BATCH_LEAF], &full[..]);
+        let wide = leaf(max, max);
+        let over_proof = leaf_proof(&program, over);
+        let over_input = GenericInput {
+            program: &program,
+            proof: &over_proof,
+            claims: over,
+        };
+        assert!(aggregate_mixed(&[], &[], &[over_input], &deps(over), 1).is_err());
+        let union = parent(&[wide, direct], &[max, &[a, b, c]].concat());
+        assert_eq!(union.dependencies().len(), MAX_CLAIMS_PER_BATCH_LEAF + 3);
+    }
+
     #[test]
     #[ignore]
     fn mixed_leaf_and_same_key_depth_two_bind_programs_and_discards() {
         let data = [7; 32];
-        let pi = pack_hash_state(&data);
+        let pi = pack_hash_state(&batch_hash(&[data]));
         let mut program = compile(
             &lean_compiler::parse(&format!(
                 "def main():\n    p = 1\n    p[1] = {}\n    p[GEN] = {}\n    return\n",
@@ -141,7 +300,7 @@ mod tests {
         let generic_input = GenericInput {
             program: &program,
             proof: &inner,
-            data,
+            claims: &[data],
         };
         for name in [
             "code_header",
@@ -151,6 +310,8 @@ mod tests {
             "operand_index",
             "counter_index",
             "generic_data",
+            "batch_count",
+            "batch_claim",
             "dependency_split",
             "bytecode_val",
             "leaf_defer",
@@ -163,7 +324,7 @@ mod tests {
                 &[GenericInput {
                     program: &program,
                     proof: &inner,
-                    data,
+                    claims: &[data],
                 }],
                 &[generic_dep],
                 1,
@@ -188,7 +349,7 @@ mod tests {
             &[GenericInput {
                 program: &program,
                 proof: &inner,
-                data,
+                claims: &[data],
             }],
             &[generic_dep],
             1,
@@ -261,7 +422,7 @@ mod tests {
                 &[GenericInput {
                     program: &program,
                     proof: &inner,
-                    data
+                    claims: &[data]
                 }],
                 &[generic_dep],
                 1
@@ -338,6 +499,16 @@ mod tests {
         assert_ne!(deps_hash(&[d]), deps_hash(&[g2]));
     }
 
+    fn generic_deps(count: usize) -> Vec<Dependency> {
+        (0..count)
+            .map(|i| {
+                let mut data = [0; 32];
+                data[..8].copy_from_slice(&(i as u64).to_be_bytes());
+                dep(0x11, data, [0x5a; 32])
+            })
+            .collect()
+    }
+
     #[test]
     fn leansphincs_and_leanstark_dependencies_are_enabled() {
         let [a, b, _, _, g1, g2] = vector_dependencies();
@@ -348,10 +519,9 @@ mod tests {
             other[index] = value;
             assert!(check_dependencies(&[other]).is_err());
         }
-        let generic =
-            |count: usize| -> Vec<Dependency> { (0..count).map(|i| dep(0x11, [i as u8; 32], [0x5a; 32])).collect() };
-        assert!(check_dependencies(&generic(MAX_GENERIC_DEPENDENCIES)).is_ok());
-        assert!(check_dependencies(&generic(MAX_GENERIC_DEPENDENCIES + 1)).is_err());
+        // leanSTARK entries share the list's dependency bound; batch leaves have no separate list cap.
+        assert!(check_dependencies(&generic_deps(MAX_DEPENDENCIES)).is_ok());
+        assert!(check_dependencies(&generic_deps(MAX_DEPENDENCIES + 1)).is_err());
     }
 
     #[test]
@@ -418,18 +588,98 @@ mod tests {
             unknown[2][index] = if value == 0x10 { 0x11 } else { value };
             assert!(rejects(&unknown, None, pack_hash_state(&deps_hash(&unknown))));
         }
-        // At most MAX_GENERIC_DEPENDENCIES leanSTARK entries.
-        let generic =
-            |count: usize| -> Vec<Dependency> { (0..count).map(|i| dep(0x11, [i as u8; 32], [0x5a; 32])).collect() };
-        let full = generic(MAX_GENERIC_DEPENDENCIES);
+        // leanSTARK entries are bounded only by the list's dependency bound.
+        let full = generic_deps(MAX_DEPENDENCIES);
         assert!(
             configure(&full, None)
                 .execute(pack_hash_state(&deps_hash(&full)))
                 .unconstrained_reads
                 .is_empty()
         );
-        let over = generic(MAX_GENERIC_DEPENDENCIES + 1);
+        let over = generic_deps(MAX_DEPENDENCIES + 1);
         assert!(rejects(&over, None, pack_hash_state(&deps_hash(&over))));
+    }
+
+    /// EIP-8288 Test Case 12 claim-list rules, on the guest's batch statement with a small `MAX_CLAIMS_PER_BATCH_LEAF`.
+    #[test]
+    fn batch_leaf_statement_binds_a_bounded_strictly_increasing_claim_list() {
+        const MAX: usize = 4;
+        let source = runtime_guest_source(19).replace(
+            &format!("MAX_CLAIMS_PER_BATCH_LEAF = {MAX_CLAIMS_PER_BATCH_LEAF}\n"),
+            &format!("MAX_CLAIMS_PER_BATCH_LEAF = {MAX}\n"),
+        );
+        let source = format!(
+            "{}\ndef main():\n    logs, squares = exponent_tables()\n    data = StackBuf(2)\n    hint_witness(data, \"data\")\n    vk = StackBuf(2)\n    hint_witness(vk, \"vk\")\n    claims, count_g = mixed_batch(data[0], data[1], vk[0], vk[1], squares)\n    p = 1\n    assert p[1] == data[0]\n    assert p[GEN] == data[1]\n    return\n{}",
+            &source[..source.find("\ndef main():").unwrap()],
+            program_seed_source()
+        );
+        let guest = compile(&lean_compiler::parse(&source).unwrap());
+        let key = [0x5a; 32];
+        let run = |claims: &[[u8; 32]], statement: [u8; 32]| {
+            let mut hints = Hints::default();
+            hints.push("data", pack_hash_state(&statement).to_vec());
+            hints.push("vk", pack_hash_state(&key).to_vec());
+            push_batch(&mut hints, claims);
+            let mut configured = guest.clone();
+            hints.install(&mut configured);
+            std::panic::catch_unwind(|| configured.execute(pack_hash_state(&statement)))
+                .is_ok_and(|execution| execution.unconstrained_reads.is_empty())
+        };
+        let claim = |first: u8, last: u8| {
+            let mut claim = [0x33; 32];
+            claim[0] = first;
+            claim[31] = last;
+            claim
+        };
+        let (a, b, c, d, e) = (claim(1, 9), claim(1, 10), claim(2, 0), claim(2, 1), claim(0xff, 0));
+        for claims in [
+            vec![a],
+            vec![a, c],
+            vec![a, b, c],
+            vec![a, b, c, d],
+            vec![b, e],
+            vec![[0; 32], [0xff; 32]],
+        ] {
+            assert!(valid_batch_claims(&claims));
+            assert!(run(&claims, batch_hash(&claims)), "rejected {} claims", claims.len());
+        }
+        // A bare data_hash, another list's hash, an empty, oversized, repeated or unsorted list.
+        assert!(!run(&[a], a));
+        assert!(!run(&[a, c], batch_hash(&[a, b])));
+        for claims in [
+            vec![],
+            vec![a, b, c, d, e],
+            vec![a, a],
+            vec![b, a],
+            vec![a, c, b],
+            vec![c, d, d],
+        ] {
+            assert!(!run(&claims, batch_hash(&claims)), "accepted {claims:?}");
+        }
+        // A claim hint that disagrees with its hashed bytes.
+        let mut hints = Hints::default();
+        hints.push("data", pack_hash_state(&batch_hash(&[a])).to_vec());
+        hints.push("vk", pack_hash_state(&key).to_vec());
+        push_batch(&mut hints, &[a]);
+        hints.entries("batch_claim")[0][0] += F192::ONE;
+        let mut forged = guest.clone();
+        hints.install(&mut forged);
+        assert!(std::panic::catch_unwind(|| forged.execute(pack_hash_state(&batch_hash(&[a])))).is_err());
+    }
+
+    #[test]
+    fn batch_hash_matches_eip_pseudocode() {
+        let claims = [[1; 32], [2; 32]];
+        let mut preimage = b"EIP8288:batch:v1".to_vec();
+        preimage.extend_from_slice(&[1; 32]);
+        preimage.extend_from_slice(&[2; 32]);
+        assert_eq!(batch_hash(&claims), primitives::keccak::keccak256(&preimage));
+        assert_ne!(batch_hash(&[[1; 32]]), [1; 32]);
+        assert!(!valid_batch_claims(&[]));
+        assert!(valid_batch_claims(&[[0; 32]; 1]));
+        let full: Vec<[u8; 32]> = (0..MAX_CLAIMS_PER_BATCH_LEAF as u8 + 1).map(|i| [i; 32]).collect();
+        assert!(valid_batch_claims(&full[..MAX_CLAIMS_PER_BATCH_LEAF]));
+        assert!(!valid_batch_claims(&full));
     }
 
     #[test]
@@ -503,7 +753,7 @@ mod tests {
     #[ignore]
     fn executed_hash_opcodes_recurse_with_full_public_input() {
         let data = [0xa7; 32];
-        let pi = pack_hash_state(&data);
+        let pi = pack_hash_state(&batch_hash(&[data]));
         let blake = lean_vm::vmhash::compress([F64(5), F64(0), F64(7), F64(0)], [F64(5), F64(0), F64(7), F64(0)]);
         let blake_cells = [
             F192::new(blake[0].0, blake[1].0, 0),
@@ -544,7 +794,7 @@ mod tests {
             &[GenericInput {
                 program: &program,
                 proof: &proof,
-                data,
+                claims: &[data],
             }],
             &[dependency],
             1,
@@ -605,7 +855,7 @@ mod tests {
     #[ignore]
     fn generic_geometry_cap_rejects_a_native_valid_large_proof() {
         let data = [0x97; 32];
-        let pi = pack_hash_state(&data);
+        let pi = pack_hash_state(&batch_hash(&[data]));
         let source = format!(
             "def main():\n    h = HeapBuf(262144)\n    for i in mul_range(1, GEN ** 262144):\n        h[i] = i\n    p = 1\n    p[1] = {}\n    p[GEN] = {}\n    return\n",
             f192_literal(pi[0]),
@@ -731,7 +981,7 @@ mod tests {
         unified_guest();
         let compile_ms = init.elapsed().as_secs_f64() * 1000.0;
         let data = [7; 32];
-        let pi = pack_hash_state(&data);
+        let pi = pack_hash_state(&batch_hash(&[data]));
         let heap: usize = std::env::var("MIXED_PROBE_HEAP")
             .unwrap_or_else(|_| "0".into())
             .parse()
@@ -833,7 +1083,7 @@ mod tests {
             vec![GenericInput {
                 program: &program,
                 proof: &inner,
-                data,
+                claims: std::slice::from_ref(&data),
             }]
         } else {
             vec![]
@@ -902,7 +1152,7 @@ mod tests {
             .unwrap();
         assert!(size.is_power_of_two() && size <= 1 << MAX_GENERIC_BYTECODE_LOG);
         let data = [0x97; 32];
-        let pi = pack_hash_state(&data);
+        let pi = pack_hash_state(&batch_hash(&[data]));
         let program = sized_program(size, pi);
         let start = std::time::Instant::now();
         let (inner, _) = prove(&program, pi, 1).unwrap();
@@ -918,7 +1168,7 @@ mod tests {
             &[GenericInput {
                 program: &program,
                 proof: &inner,
-                data,
+                claims: &[data],
             }],
             &[dependency],
             1,
@@ -1245,7 +1495,7 @@ fn runtime_guest_source(kbc: usize) -> String {
     let aggregate = source.find("\ndef aggregate_claims(").expect("aggregation sumchecks");
     source.replace_range(main..aggregate, "\n");
     let mut declarations = format!(
-        "N_COORDS = {}\nMAX_MIXED_DEPENDENCIES = {MAX_DEPENDENCIES}\nMAX_MIXED_GENERIC = {MAX_GENERIC_DEPENDENCIES}\nMAX_GENERIC_CODE_LOG = {MAX_GENERIC_BYTECODE_LOG}\nGENERIC_COMMITTED_LOG = {MAX_GENERIC_COMMITTED_LOG}\nGENERIC_BUS_LOG = {MAX_GENERIC_BUS_LOG}\nMIXED_COMMITTED_LOG = {MAX_MIXED_COMMITTED_LOG}\nMIXED_BUS_LOG = {MAX_MIXED_BUS_LOG}\n",
+        "N_COORDS = {}\nMAX_MIXED_DEPENDENCIES = {MAX_DEPENDENCIES}\nMAX_CLAIMS_PER_BATCH_LEAF = {MAX_CLAIMS_PER_BATCH_LEAF}\nMAX_GENERIC_CODE_LOG = {MAX_GENERIC_BYTECODE_LOG}\nGENERIC_COMMITTED_LOG = {MAX_GENERIC_COMMITTED_LOG}\nGENERIC_BUS_LOG = {MAX_GENERIC_BUS_LOG}\nMIXED_COMMITTED_LOG = {MAX_MIXED_COMMITTED_LOG}\nMIXED_BUS_LOG = {MAX_MIXED_BUS_LOG}\n",
         list_values(&one, "COORD_CONST").len()
     );
     for key in ["BLOCK_KAPPA_ADJ", "COL_KAPPA_ADJ", "COORD_CONST"] {
@@ -1306,6 +1556,7 @@ fn runtime_guest_source(kbc: usize) -> String {
     }
     declarations += &format!("OPCODES = {}\n", literals((0..7).map(|i| g_pow(i).0)));
     declarations += &format!("GENERIC_VK_DOMAIN = {}\n", literals(GENERIC_VK_DOMAIN));
+    declarations += &format!("BATCH_DOMAIN = {}\n", literals(BATCH_DOMAIN));
     for (i, value) in lean_vm::hash_flock::IV_CELLS.iter().enumerate() {
         declarations += &format!("MIXED_BLAKE_IV_{i} = {}\n", f192_literal(*value));
     }
@@ -1637,6 +1888,14 @@ fn push_hash_split(hints: &mut Hints, bytes: &[u8]) {
         hints.push("byte_index", entry);
     }
 }
+fn push_batch(hints: &mut Hints, claims: &[[u8; 32]]) {
+    hints.push("batch_count", vec![gcount(claims.len())]);
+    for claim in claims {
+        hints.push("batch_claim", pack_hash_state(claim).to_vec());
+        push_cell_bytes(hints, claim);
+    }
+    push_hash_split(hints, &batch_preimage(claims));
+}
 fn dep(scheme: u8, data: [u8; 32], key: [u8; 32]) -> Dependency {
     let mut out = [0; 96];
     out[31] = scheme;
@@ -1722,7 +1981,11 @@ fn prepare_mixed_with_hints(
     }
     available.extend(raw_sph.iter().map(|(pk, data, _)| sph_dep(pk, *data)));
     for input in raw_generic {
-        available.insert(dep(0x11, input.data, generic_verification_key(input.program)?));
+        if !valid_batch_claims(input.claims) {
+            return Err(MixedError::Dependencies);
+        }
+        let key = generic_verification_key(input.program)?;
+        available.extend(input.claims.iter().map(|claim| dep(0x11, *claim, key)));
     }
     if selected.iter().any(|dependency| !available.contains(dependency)) {
         return Err(MixedError::Dependencies);
@@ -1769,7 +2032,7 @@ fn prepare_mixed_with_hints(
         if !generic_recursion_supported(input.program, input.proof) {
             return Err(MixedError::Capacity);
         }
-        let pi = pack_hash_state(&input.data);
+        let pi = pack_hash_state(&batch_hash(input.claims));
         let summary = verify(input.program, &pi, input.proof)
             .map_err(|error| MixedError::Proof(AggregateVerifyError::Snark(error)))?;
         hints.push(
@@ -1815,12 +2078,11 @@ fn prepare_mixed_with_hints(
         sub.bytecode_row_point = vec![F192::ZERO; mixed_vars() - 4];
         sub.bytecode_selector_point = vec![F192::ZERO; 4];
         sub.bytecode_value = F192::ZERO;
-        push_selection(
-            &mut hints,
-            selected,
-            &mut seen,
-            &dep(0x11, input.data, generic_verification_key(input.program)?),
-        );
+        let key = generic_verification_key(input.program)?;
+        push_batch(&mut hints, input.claims);
+        for claim in input.claims {
+            push_selection(&mut hints, selected, &mut seen, &dep(0x11, *claim, key));
+        }
         fresh.push(sub);
         carried.push(leaf.clone());
     }
