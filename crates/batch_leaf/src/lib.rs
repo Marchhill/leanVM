@@ -12,6 +12,7 @@ pub mod mldsa;
 pub mod mq;
 #[cfg(test)]
 mod mq_guest;
+pub mod null_leaf;
 pub mod xmss_leaf;
 
 use std::collections::BTreeMap;
@@ -167,7 +168,15 @@ pub fn program<S: Scheme>() -> Program {
     if std::env::var_os("BATCH_LEAF_DUMP").is_some() {
         std::fs::write(format!("/tmp/batch_leaf_{}.py", S::NAME), &source).ok();
     }
-    compile(&parse_with_replacements(&source, &ps).unwrap_or_else(|e| panic!("parse: {e}")))
+    let ast = parse_with_replacements(&source, &ps).unwrap_or_else(|e| panic!("parse: {e}"));
+    if std::env::var_os("BATCH_LEAF_SIZE").is_some() {
+        eprintln!(
+            "{} code without filler: {}",
+            S::NAME,
+            lean_compiler::compile_without_filler(&ast).prog.len()
+        );
+    }
+    compile(&ast)
 }
 
 /// Sort the items by claim, reject duplicates, and build the hint streams and public input.

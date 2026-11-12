@@ -4,6 +4,13 @@ version.workspace = true
 edition.workspace = true
 publish = false
 
+[features]
+mixed = ["rec_aggregation/eip8288-mixed"]
+
+[[bin]]
+name = "agg_bench"
+required-features = ["mixed"]
+
 [lints]
 workspace = true
 

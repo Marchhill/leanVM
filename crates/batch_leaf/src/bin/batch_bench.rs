@@ -45,6 +45,7 @@ fn main() {
         "xmss" => run::<batch_leaf::xmss_leaf::Xmss>(n, repeat, batch_leaf::xmss_leaf::items),
         "mldsa44" => run::<batch_leaf::mldsa::MlDsa44>(n, repeat, batch_leaf::mldsa::items),
         "falcon512" => run::<batch_leaf::falcon::Falcon512>(n, repeat, batch_leaf::falcon::items),
+        "null" => run::<batch_leaf::null_leaf::Null>(n, repeat, batch_leaf::null_leaf::items),
         other => panic!("unknown scheme {other}"),
     }
 }

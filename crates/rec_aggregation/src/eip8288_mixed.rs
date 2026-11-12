@@ -7,12 +7,23 @@ pub type Dependency = [u8; 96];
 
 pub const MAX_DEPENDENCIES: usize = 256;
 /// EIP-8288 `MAX_CLAIMS_PER_BATCH_LEAF` (TBD in the EIP), a guest constant: changing it changes `AGGREGATED_VK`.
-pub const MAX_CLAIMS_PER_BATCH_LEAF: usize = 16;
-pub const MAX_GENERIC_BYTECODE_LOG: usize = 11;
-pub const MAX_GENERIC_COMMITTED_LOG: usize = 22;
-pub const MAX_GENERIC_BUS_LOG: usize = 22;
-pub const MAX_MIXED_COMMITTED_LOG: usize = 27;
-pub const MAX_MIXED_BUS_LOG: usize = 26;
+pub const MAX_CLAIMS_PER_BATCH_LEAF: usize = env_or(option_env!("EIP8288_MAX_CLAIMS"), 16);
+pub const MAX_GENERIC_BYTECODE_LOG: usize = env_or(option_env!("EIP8288_GENERIC_CODE_LOG"), 11);
+pub const MAX_GENERIC_COMMITTED_LOG: usize = env_or(option_env!("EIP8288_GENERIC_COMMITTED_LOG"), 22);
+pub const MAX_GENERIC_BUS_LOG: usize = env_or(option_env!("EIP8288_GENERIC_COMMITTED_LOG"), 22);
+
+/// A build-time override of a profile constant, for benchmark variants of the guest.
+const fn env_or(value: Option<&str>, default: usize) -> usize {
+    let Some(text) = value else { return default };
+    let (bytes, mut i, mut n) = (text.as_bytes(), 0, 0);
+    while i < bytes.len() {
+        n = 10 * n + (bytes[i] - b'0') as usize;
+        i += 1;
+    }
+    n
+}
+pub const MAX_MIXED_COMMITTED_LOG: usize = env_or(option_env!("EIP8288_MIXED_COMMITTED_LOG"), 27);
+pub const MAX_MIXED_BUS_LOG: usize = env_or(option_env!("EIP8288_MIXED_BUS_LOG"), 26);
 pub const LOG_INV_RATE: usize = 1;
 
 /// An EIP-8288 batch leaf: a generic CPU proof whose public input is `batch_hash(claims)`.

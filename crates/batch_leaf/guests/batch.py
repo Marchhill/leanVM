@@ -28,30 +28,45 @@ def put_cell(x, dst):
 
 def lane_less(a, b):
     # a < b for two lanes compared as the 8 bytes they hold (byte 0 first, each
-    # byte's bit 7 first), i.e. as big-endian strings.
-    ab = StackBuf(BASE_FIELD_BITS)
-    bb = StackBuf(BASE_FIELD_BITS)
+    # byte's bit 7 first), i.e. as big-endian strings. One byte per iteration keeps
+    # the code small; (ra, rb, eq, lt) carry through st.
+    ab = HeapBuf(BASE_FIELD_BITS)
+    bb = HeapBuf(BASE_FIELD_BITS)
     hint_decompose_bits(ab, a, BASE_FIELD_BITS)
     hint_decompose_bits(bb, b, BASE_FIELD_BITS)
-    ra = 0
-    rb = 0
-    eq = 1
-    lt = 0
-    for byte in unroll(0, 8):
+    st = HeapBuf(36)
+    st[1] = 0
+    st[GEN] = 0
+    st[GEN ** 2] = 1
+    st[GEN ** 3] = 0
+    for byte in mul_range(1, GEN ** 8):
+        cur = st * byte ** 4
+        xa = ab * byte ** 8
+        xb = bb * byte ** 8
+        w = byte ** 8
+        ra = cur[1]
+        rb = cur[GEN]
+        eq = cur[GEN ** 2]
+        lt = cur[GEN ** 3]
         for bit in unroll(0, 8):
-            p = 8 * byte + 7 - bit
-            x = ab[p]
-            ab[p] = x * x
-            y = bb[p]
-            bb[p] = y * y
-            ra += x * COORD_BASIS[p]
-            rb += y * COORD_BASIS[p]
+            x = xa[GEN ** (7 - bit)]
+            xa[GEN ** (7 - bit)] = x * x
+            y = xb[GEN ** (7 - bit)]
+            xb[GEN ** (7 - bit)] = y * y
+            ra += x * w * COORD_BASIS[7 - bit]
+            rb += y * w * COORD_BASIS[7 - bit]
             d = x + y
             lt += eq * d * y
             eq = eq * (1 + d)
-    assert ra == a
-    assert rb == b
-    assert lt == 1
+        nxt = cur * GEN ** 4
+        nxt[1] = ra
+        nxt[GEN] = rb
+        nxt[GEN ** 2] = eq
+        nxt[GEN ** 3] = lt
+    fin = st * GEN ** 32
+    assert fin[1] == a
+    assert fin[GEN] == b
+    assert fin[GEN ** 3] == 1
     return
 
 
