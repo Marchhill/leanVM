@@ -183,6 +183,8 @@ fn main() {
         "xmss" => run::<batch_leaf::xmss_leaf::Xmss>(mode, rest, &batch_leaf::xmss_leaf::items),
         "falcon512" => run::<batch_leaf::falcon::Falcon512>(mode, rest, &batch_leaf::falcon::items),
         "mldsa44" => run::<batch_leaf::mldsa::MlDsa44>(mode, rest, &batch_leaf::mldsa::items),
+        "slhdsa128s" => run::<batch_leaf::slhdsa::SlhDsaShake128s>(mode, rest, &batch_leaf::slhdsa::items),
+        "mldsa44wa" => run::<batch_leaf::webauthn::MlDsa44WebAuthn>(mode, rest, &batch_leaf::webauthn::items),
         other => panic!("unknown scheme {other}"),
     }
 }
