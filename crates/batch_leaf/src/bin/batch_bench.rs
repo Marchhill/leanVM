@@ -16,7 +16,7 @@ fn run<S: Scheme>(n: usize, repeat: usize, items: impl Fn(usize) -> Vec<S::Item>
         let base: usize = s.base_counts.iter().sum();
         println!(
             "{{\"scheme\":\"{}\",\"n\":{},\"run\":{},\"threads\":\"{}\",\"prove_s\":{:.4},\"verify_ms\":{:.3},\"proof_bytes\":{},\"base_cycles\":{},\"base_counts\":{:?},\"cycles\":{},\"committed\":{},\"log_mem\":{},\"mem_used\":{},\"bytecode\":{},\"compile_s\":{:.3}}}",
-            S::NAME,
+            std::env::args().nth(1).unwrap(),
             m.n,
             run,
             threads,
@@ -110,6 +110,8 @@ fn main() {
         "sha256" => sha256(n, repeat),
         "xmss" => run::<batch_leaf::xmss_leaf::Xmss>(n, repeat, batch_leaf::xmss_leaf::items),
         "mldsa44" => run::<batch_leaf::mldsa::MlDsa44>(n, repeat, batch_leaf::mldsa::items),
+        "mldsa44m32" => run::<batch_leaf::mldsa::MlDsa44>(n, repeat, |n| batch_leaf::mldsa::items_len(n, 32)),
+        "mldsa44m400" => run::<batch_leaf::mldsa::MlDsa44>(n, repeat, |n| batch_leaf::mldsa::items_len(n, 400)),
         "falcon512" => run::<batch_leaf::falcon::Falcon512>(n, repeat, batch_leaf::falcon::items),
         "null" => run::<batch_leaf::null_leaf::Null>(n, repeat, batch_leaf::null_leaf::items),
         "slhdsa128s" => run::<batch_leaf::slhdsa::SlhDsaShake128s>(n, repeat, batch_leaf::slhdsa::items),

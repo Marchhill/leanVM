@@ -82,3 +82,30 @@ def load_checked(dst, npairs_g, d0, d1):
     assert fin[1] == d0
     assert fin[GEN] == d1
     return
+
+
+def sponge_var(lanes, q_g, partial, states):
+    # Absorbs lanes[0 .. q) then `partial` (the last message bytes with the padding byte
+    # already in place, the bytes after it zero), zero lanes to the block's end and 0x80,
+    # from the zero state at states; returns the final state. Rate 17 lanes.
+    split = StackBuf(2)
+    hint_witness(split, "sv_split")
+    full_g = split[0]
+    assert log(full_g) < 64
+    assert log(split[1]) < 17
+    assert full_g ** 17 * split[1] == q_g
+    blocks_g = full_g * GEN
+    last_g = blocks_g ** 17 / GEN
+    if q_g == last_g:
+        lanes[q_g] = partial + LANE_TOP
+    else:
+        lanes[q_g] = partial
+        zc = last_g / (q_g * GEN)
+        for k in mul_range(1, zc):
+            lanes[q_g * GEN * k] = 0
+        lanes[last_g] = LANE_TOP
+    for k in unroll(0, 13):
+        states[GEN ** k] = 0
+    for b in mul_range(1, blocks_g):
+        absorb_block(states * b ** 13, lanes * b ** 17, states * (b * GEN) ** 13, 17)
+    return states * blocks_g ** 13

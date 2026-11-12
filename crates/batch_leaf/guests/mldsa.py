@@ -1,5 +1,5 @@
-# ML-DSA-44 (FIPS 204, pure, empty context) claim:
-# claim = Keccak-256(CLAIM_TAG || pk || M), pk the 1312-byte encoded key, M 32 bytes.
+# ML-DSA-44 (FIPS 204, pure, empty context) verification core; the claim and message
+# encoding are in mldsa_plain.py.
 #
 # The signature is a witness and only its acceptance is proven: c~ is recomputed from
 # mu and w1 and compared; z and the hint vector h are taken as coefficients (not their
@@ -300,18 +300,12 @@ def encode_group(grp, wv, hh, hin, aux):
 # ------------------------------------------------------------------ verification
 
 
-def mldsa_core(ctx, pk, mu_in):
-    # ML-DSA-44 verification of the message whose lanes 8..16 of mu's input the caller
-    # wrote (M' after tr, padded); pk is the hinted, padded key buffer.
+def mldsa_core(ctx, pk, mus):
+    # ML-DSA-44 verification given mu's final SHAKE256 state; pk is the hinted, padded key.
     tb = ctx[1]
     aux = ctx[GEN]
     zt = ctx[GEN ** 2]
     finv = ctx[GEN ** 3]
-    trst = HeapBuf(13 * 11)
-    trs = sponge(pk, 10, 17, trst)
-    state_lanes(trs, mu_in, 4, 0)
-    must = HeapBuf(26)
-    mus = sponge(mu_in, 1, 17, must)
 
     # c = SampleInBall(c~).
     ct = StackBuf(4)

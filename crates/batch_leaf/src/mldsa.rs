@@ -18,7 +18,7 @@ const GUEST: &str = include_str!("../guests/mldsa.py");
 const PLAIN: &str = include_str!("../guests/mldsa_plain.py");
 pub const LANES: &str = include_str!("../guests/lanes.py");
 
-pub const CLAIM_TAG: &[u8; 16] = b"EIP8288:mldsa:44";
+pub const CLAIM_TAG: &[u8; 16] = b"EIP8288:mldsa:v2";
 const GAMMA1: i32 = 1 << 17;
 const GAMMA2: u32 = 95232;
 const BETA: i32 = 78;
@@ -29,19 +29,47 @@ pub struct MlDsa44;
 
 pub struct MlDsaItem {
     pub pk: [u8; ml_dsa_44::PK_LEN],
-    pub msg: [u8; 32],
+    pub msg: Vec<u8>,
     pub sig: [u8; ml_dsa_44::SIG_LEN],
 }
 
-/// `n` distinct keys, each signing its own 32-byte message (deterministic).
+/// Longest message the leaf accepts: M' = 0x00 0x00 || M fills at most MSG_LANES - 1 whole lanes
+/// and a partial one.
+pub const MAX_MSG: usize = 8 * 64 - 3;
+
+/// A WebAuthn-shaped message: authenticatorData (rpIdHash, flags, signCount) || SHA-256(clientDataJSON).
+pub fn passkey_message(i: usize) -> Vec<u8> {
+    use sha2::Digest;
+    let mut m = sha2::Sha256::digest(b"wallet.example.org").to_vec();
+    m.push(0x05);
+    m.extend_from_slice(&(1000 + i as u32).to_be_bytes());
+    let cdj = format!(
+        r#"{{"type":"webauthn.get","challenge":"{i:043}","origin":"https://wallet.example.org","crossOrigin":false}}"#
+    );
+    m.extend_from_slice(&sha2::Sha256::digest(cdj.as_bytes()));
+    m
+}
+
+/// `n` distinct keys, each signing a 69-byte passkey message (deterministic).
 pub fn items(n: usize) -> Vec<MlDsaItem> {
+    items_with(n, &passkey_message)
+}
+
+/// `n` distinct keys, each signing a `len`-byte message.
+pub fn items_len(n: usize, len: usize) -> Vec<MlDsaItem> {
+    items_with(n, &|i| {
+        (0..len).map(|k| (k as u8) ^ (i as u8).wrapping_mul(37)).collect()
+    })
+}
+
+pub fn items_with(n: usize, message: &dyn Fn(usize) -> Vec<u8>) -> Vec<MlDsaItem> {
     (0..n)
         .map(|i| {
             let mut seed = [0u8; 32];
             seed[..8].copy_from_slice(&(i as u64).to_le_bytes());
             let (pk, sk) = ml_dsa_44::KG::keygen_from_seed(&seed);
-            let mut msg = [0x5au8; 32];
-            msg[..8].copy_from_slice(&(i as u64).to_le_bytes());
+            let msg = message(i);
+            assert!(msg.len() <= MAX_MSG);
             let sig = sk.try_sign_with_seed(&seed, &msg, &[]).expect("signs");
             assert!(pk.verify(&msg, &sig, &[]));
             MlDsaItem {
@@ -176,14 +204,33 @@ impl Scheme for MlDsa44 {
     fn claim(item: &MlDsaItem) -> Claim {
         let mut bytes = CLAIM_TAG.to_vec();
         bytes.extend_from_slice(&item.pk);
+        bytes.extend_from_slice(&(item.msg.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(&[0, 0]);
         bytes.extend_from_slice(&item.msg);
         primitives::keccak::keccak256(&bytes)
     }
 
     fn push_hints(item: &MlDsaItem, hints: &mut Hints) {
         hints.push("ml_pk", lanes(&item.pk).into_iter().map(lane_f).collect());
-        hints.push("ml_msg", lanes(&item.msg).into_iter().map(lane_f).collect());
-        push_bytes(hints, &item.msg);
+        let mut mp = vec![0u8, 0];
+        mp.extend_from_slice(&item.msg);
+        let (nq, r) = (mp.len() / 8, mp.len() % 8);
+        hints.push("ml_mlen", vec![count(nq), count(r)]);
+        for lane in lanes(&mp[..8 * nq]) {
+            hints.push("ml_mlane", vec![lane_f(lane)]);
+        }
+        let mut part = [0u8; 8];
+        part[..r].copy_from_slice(&mp[8 * nq..]);
+        hints.push("ml_mpart", vec![lane_f(u64::from_le_bytes(part))]);
+        push_bytes(hints, &part);
+        if nq > 0 {
+            push_bytes(hints, &mp[..8]);
+        }
+        // the two sponges' block splits: claim (167 lanes before M'), then mu (8)
+        for before in [167, 8] {
+            let q = before + nq;
+            hints.push("sv_split", vec![count(q / 17), count(q % 17)]);
+        }
         push_core_hints(&item.pk, &item.msg, &item.sig, hints);
     }
 }
@@ -382,6 +429,37 @@ impl Mq<'_> {
 mod tests {
     use super::*;
 
+    /// Pure ML-DSA-44 with an empty context over authenticatorData || SHA-256(clientDataJSON),
+    /// the COSE -48 / WebAuthn passkey form, signed and verified by the fips204 crate.
+    #[test]
+    fn passkey_vector() {
+        let item = &items(1)[0];
+        assert_eq!(item.msg.len(), 69);
+        let pk = ml_dsa_44::PublicKey::try_from_bytes(item.pk).unwrap();
+        assert!(pk.verify(&item.msg, &item.sig, &[]));
+        assert!(!pk.verify(&item.msg, &item.sig, b"ctx"));
+        MlDsa44::push_hints(item, &mut Hints::default());
+    }
+
+    #[test]
+    fn host_recomputes_any_length() {
+        for len in [0, 5, 6, 32, 69, 300, MAX_MSG] {
+            for item in items_len(1, len) {
+                MlDsa44::push_hints(&item, &mut Hints::default());
+            }
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn leaf_proves_edge_lengths() {
+        let program = crate::program::<MlDsa44>();
+        for len in [0, 5, 6, 300, MAX_MSG] {
+            let m = crate::prove_leaf::<MlDsa44>(&program, items_len(1, len));
+            println!("len {len}: {} cycles", m.stats.base_counts.iter().sum::<usize>());
+        }
+    }
+
     #[test]
     fn host_recomputes_signatures() {
         for item in items(3) {
@@ -425,7 +503,12 @@ mod soundness {
         let next = |x: F192| x * F192::new(primitives::field::G.0, 0, 0);
         let one = |x: F192| x + F192::ONE;
         let cases: Vec<(&str, Hints)> = vec![
-            ("message lane", flip("ml_msg", 0, 0, &one)),
+            ("message lane", flip("ml_mlane", 3, 0, &one)),
+            (
+                "message tail",
+                flip("ml_mpart", 0, 0, &|x: F192| x + F192::new(1 << 60, 0, 0)),
+            ),
+            ("message length", flip("ml_mlen", 0, 1, &next)),
             ("pk lane", flip("ml_pk", 0, 100, &one)),
             ("c~ lane", flip("ml_ctilde", 0, 0, &one)),
             ("z sign", flip("ml_z", 5, 2, &one)),
