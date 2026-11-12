@@ -53,6 +53,8 @@ pub trait Scheme {
     fn placeholders(ps: &mut BTreeMap<String, String>);
     fn claim(item: &Self::Item) -> Claim;
     fn push_hints(item: &Self::Item, hints: &mut Hints);
+    /// Hints the per-proof setup consumes (constant tables), pushed before any claim's.
+    fn setup_hints(_: &mut Hints) {}
 }
 
 pub fn count(n: usize) -> F192 {
@@ -191,6 +193,7 @@ pub fn witness<S: Scheme>(mut items: Vec<S::Item>) -> (Vec<S::Item>, Hints, [F19
     hints.push("n_claims", vec![count(n)]);
     let m = 2 + 4 * n;
     hints.push("sponge_split", vec![count(m / 17), count(m % 17)]);
+    S::setup_hints(&mut hints);
     for item in &items {
         S::push_hints(item, &mut hints);
     }
@@ -239,5 +242,35 @@ pub fn prove_leaf<S: Scheme>(program: &Program, items: Vec<S::Item>) -> Measurem
         verify_ms,
         proof_bytes,
         stats,
+    }
+}
+
+/// A constant table as cells hinted in pairs and bound by a BLAKE2s chain (`load_checked`):
+/// the pairs to hint and the chain's final digest cells.
+pub fn checked_table(cells: &[F192]) -> (Vec<Vec<F192>>, [F192; 2]) {
+    let mut cells = cells.to_vec();
+    if cells.len() % 2 == 1 {
+        cells.push(F192::ZERO);
+    }
+    let lanes = |a: F192, b: F192| [a.c0, a.c1, b.c0, b.c1].map(primitives::field::F64);
+    let mut h = lanes(F192::ZERO, F192::ZERO);
+    for pair in cells.chunks(2) {
+        h = lean_vm::vmhash::compress(h, lanes(pair[0], pair[1]));
+    }
+    let pairs = cells.chunks(2).map(|p| p.to_vec()).collect();
+    (pairs, [F192::new(h[0].0, h[1].0, 0), F192::new(h[2].0, h[3].0, 0)])
+}
+
+/// Placeholders for a checked table's pair count and digest.
+pub fn checked_placeholders(ps: &mut BTreeMap<String, String>, name: &str, cells: &[F192]) {
+    let (pairs, d) = checked_table(cells);
+    ps.insert(format!("{name}_PAIRS"), pairs.len().to_string());
+    ps.insert(format!("{name}_D0"), f192_literal(d[0]));
+    ps.insert(format!("{name}_D1"), f192_literal(d[1]));
+}
+
+pub fn push_checked(hints: &mut Hints, cells: &[F192]) {
+    for pair in checked_table(cells).0 {
+        hints.push("table_cells", pair);
     }
 }

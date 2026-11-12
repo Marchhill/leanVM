@@ -33,20 +33,55 @@ H2 = 16777216
 
 
 def tb_powers(tb):
-    # P_s[k] = g^(s k) for s = 1, 2^12, 2^24, QT0[k] = g^(q k), QT1[k] = g^(2^12 q k), k <= 4096.
+    # P_s[k] = g^(s k) for s = 1, 2^12, 2^24, QT0[k] = g^(q k), QT1[k] = g^(2^12 q k), k <= 4096
+    # (QT1 to 16384); four entries per table per iteration.
     tb[GEN ** P0_OFF] = 1
     tb[GEN ** P1_OFF] = 1
     tb[GEN ** P2_OFF] = 1
     tb[GEN ** QT0_OFF] = 1
     tb[GEN ** QT1_OFF] = 1
-    for k in mul_range(1, GEN ** LIMB):
-        tb[GEN ** (P0_OFF + 1) * k] = tb[GEN ** P0_OFF * k] * GEN
-        tb[GEN ** (P1_OFF + 1) * k] = tb[GEN ** P1_OFF * k] * GEN ** H1
-        tb[GEN ** (P2_OFF + 1) * k] = tb[GEN ** P2_OFF * k] * GEN ** H2
-        tb[GEN ** (QT0_OFF + 1) * k] = tb[GEN ** QT0_OFF * k] * GEN ** Q_MOD
-        tb[GEN ** (QT1_OFF + 1) * k] = tb[GEN ** QT1_OFF * k] * GEN ** (Q_MOD * H1)
-    for k in mul_range(GEN ** LIMB, GEN ** Q1_WIDE):
-        tb[GEN ** (QT1_OFF + 1) * k] = tb[GEN ** QT1_OFF * k] * GEN ** (Q_MOD * H1)
+    for k in mul_range(1, GEN ** (LIMB // 4)):
+        k4 = k ** 4
+        tb_run(tb * GEN ** P0_OFF * k4, GEN)
+        tb_run(tb * GEN ** P1_OFF * k4, GEN ** H1)
+        tb_run(tb * GEN ** P2_OFF * k4, GEN ** H2)
+        tb_run(tb * GEN ** QT0_OFF * k4, GEN ** Q_MOD)
+        tb_run(tb * GEN ** QT1_OFF * k4, GEN ** (Q_MOD * H1))
+    for k in mul_range(GEN ** (LIMB // 4), GEN ** (Q1_WIDE // 4)):
+        tb_run(tb * GEN ** QT1_OFF * k ** 4, GEN ** (Q_MOD * H1))
+    return
+
+
+@inline
+def tb_run(base, h):
+    cur = base[1]
+    for q in unroll(0, 4):
+        cur = cur * h
+        base[GEN ** (q + 1)] = cur
+    return
+
+
+@inline
+def sq_run(f, p, m4):
+    # Four pairs from F[2m] for m = m4 .. m4 + 3, P[m] = h^m: F[2m+1] = F[2m] P[m], F[2m+2] = F[2m+1] P[m+1].
+    cur = f[1]
+    for q in unroll(0, 4):
+        odd = cur * p[GEN ** q]
+        f[GEN ** (2 * q + 1)] = odd
+        cur = odd * p[GEN ** (q + 1)]
+        f[GEN ** (2 * q + 2)] = cur
+    return
+
+
+@inline
+def sq_run_neg(f, p, m4):
+    # The same downwards; f sits at F[-2 m4 - 8], so offsets stay nonnegative.
+    cur = f[GEN ** 8]
+    for q in unroll(0, 4):
+        odd = cur * p[GEN ** q]
+        f[GEN ** (7 - 2 * q)] = odd
+        cur = odd * p[GEN ** (q + 1)]
+        f[GEN ** (6 - 2 * q)] = cur
     return
 
 
@@ -55,19 +90,16 @@ def tb_squares(tb):
     tb[GEN ** F0_OFF] = 1
     tb[GEN ** F12_OFF] = 1
     tb[GEN ** F24_OFF] = 1
-    for k in mul_range(1, GEN ** LIMB):
-        k2 = k * k
+    for k in mul_range(1, GEN ** (LIMB // 4)):
+        k4 = k ** 4
+        k8 = k4 * k4
         for s in unroll(0, 3):
-            odd = tb[GEN ** (F0_OFF + s * FT) * k2] * tb[GEN ** (P0_OFF + s * (LIMB + 1)) * k]
-            tb[GEN ** (F0_OFF + s * FT + 1) * k2] = odd
-            tb[GEN ** (F0_OFF + s * FT + 2) * k2] = odd * tb[GEN ** (P0_OFF + s * (LIMB + 1) + 1) * k]
-    for k in mul_range(1, GEN ** (LIMB // 2 + 1)):
-        # nk = g^(F_LO - 2 - 2k): the base sits at index -(2k + 2), so every offset is nonnegative.
-        nk = GEN ** (F_LO - 2) / (k * k)
+            sq_run(tb * GEN ** (F0_OFF + s * FT) * k8, tb * GEN ** (P0_OFF + s * (LIMB + 1)) * k4, k4)
+    for k in mul_range(1, GEN ** (LIMB // 8)):
+        k4 = k ** 4
+        nk = GEN ** (F_LO - 8) / (k4 * k4)
         for s in unroll(0, 3):
-            odd = tb[GEN ** (s * FT + 2) * nk] * tb[GEN ** (P0_OFF + s * (LIMB + 1)) * k]
-            tb[GEN ** (s * FT + 1) * nk] = odd
-            tb[GEN ** (s * FT) * nk] = odd * tb[GEN ** (P0_OFF + s * (LIMB + 1) + 1) * k]
+            sq_run_neg(tb * nk * GEN ** (s * FT), tb * GEN ** (P0_OFF + s * (LIMB + 1)) * k4, k4)
     return
 
 
@@ -169,25 +201,42 @@ def mq_sub(a, b, out, tb):
     return
 
 
-def ntt_block(sa, da, z0, z1, tb, layer: Const):
-    # Cooley-Tukey: t = z b, (a, b) <- (a + t, a - t).
-    for j in mul_range(1, GEN ** (2 ** (7 - layer))):
-        a = sa * j ** REC
-        b = a * GEN ** (REC * 2 ** (7 - layer))
-        t = mq_red(mq_prod(z0, z1, b[1], b[GEN], tb), tb)
-        ga = a[GEN ** 2]
-        u = mq_can(ga * t[2], tb)
-        put_rec(da * j ** REC, u)
-        v = mq_can(ga * GEN ** (2 * Q_MOD) / t[2], tb)
-        put_rec(da * j ** REC * GEN ** (REC * 2 ** (7 - layer)), v)
+@inline
+def ct_one(a, da, z0, z1, tb, off):
+    # Cooley-Tukey at a / a * off: t = z b, (a, b) <- (a + t, a - t).
+    b = a * off
+    t = mq_red(mq_prod(z0, z1, b[1], b[GEN], tb), tb)
+    ga = a[GEN ** 2]
+    u = mq_can(ga * t[2], tb)
+    put_rec(da, u)
+    v = mq_can(ga * GEN ** (2 * Q_MOD) / t[2], tb)
+    put_rec(da * off, v)
+    return
+
+
+def ct_run(sa, da, z0, z1, tb, npairs_g, off):
+    # One block of len = 2 npairs butterflies, two per iteration; off = g^(REC len).
+    for j in mul_range(1, npairs_g):
+        o = j ** (2 * REC)
+        ct_one(sa * o, da * o, z0, z1, tb, off)
+        ct_one(sa * o * GEN ** REC, da * o * GEN ** REC, z0, z1, tb, off)
     return
 
 
 def ntt_layer(src, dst, tb, zt, layer: Const):
-    for b in mul_range(1, GEN ** (2 ** layer)):
-        z = zt * (GEN ** (2 ** layer) * b) ** REC
-        base = b ** (REC * 2 ** (8 - layer))
-        ntt_block(src * base, dst * base, z[1], z[GEN], tb, layer)
+    if const(layer != 7):
+        for b in mul_range(1, GEN ** (2 ** layer)):
+            z = zt * (GEN ** (2 ** layer) * b) ** REC
+            base = b ** (REC * 2 ** (8 - layer))
+            ct_run(src * base, dst * base, z[1], z[GEN], tb, GEN ** (2 ** (6 - layer)), GEN ** (REC * 2 ** (7 - layer)))
+    else:
+        # len 1: two blocks, each with its own zeta, per iteration.
+        for b in mul_range(1, GEN ** 64):
+            z = zt * (GEN ** 128 * b * b) ** REC
+            base = b ** (4 * REC)
+            ct_one(src * base, dst * base, z[1], z[GEN], tb, GEN ** REC)
+            z2 = z * GEN ** REC
+            ct_one(src * base * GEN ** (2 * REC), dst * base * GEN ** (2 * REC), z2[1], z2[GEN], tb, GEN ** REC)
     return
 
 
@@ -201,27 +250,42 @@ def ntt(src, tb, zt):
     return cur
 
 
-def intt_block(sa, da, z0, z1, tb, s: Const):
+@inline
+def gs_one(a, da, z0, z1, tb, off):
     # Gentleman-Sande with z = -zeta: (a, b) <- (a + b, zeta (b - a)).
-    for j in mul_range(1, GEN ** (2 ** s)):
-        a = sa * j ** REC
-        b = a * GEN ** (REC * 2 ** s)
-        ga = a[GEN ** 2]
-        gb = b[GEN ** 2]
-        u = mq_can(ga * gb, tb)
-        put_rec(da * j ** REC, u)
-        d = mq_can(gb * GEN ** (2 * Q_MOD) / ga, tb)
-        v = mq_red(mq_prod(z0, z1, d[0], d[1], tb), tb)
-        put_rec(da * j ** REC * GEN ** (REC * 2 ** s), v)
+    b = a * off
+    ga = a[GEN ** 2]
+    gb = b[GEN ** 2]
+    u = mq_can(ga * gb, tb)
+    put_rec(da, u)
+    d = mq_can(gb * GEN ** (2 * Q_MOD) / ga, tb)
+    v = mq_red(mq_prod(z0, z1, d[0], d[1], tb), tb)
+    put_rec(da * off, v)
+    return
+
+
+def gs_run(sa, da, z0, z1, tb, npairs_g, off):
+    for j in mul_range(1, npairs_g):
+        o = j ** (2 * REC)
+        gs_one(sa * o, da * o, z0, z1, tb, off)
+        gs_one(sa * o * GEN ** REC, da * o * GEN ** REC, z0, z1, tb, off)
     return
 
 
 def intt_layer(src, dst, tb, zt, s: Const):
     # len = 2^s; block b uses zeta index m = 2^(8-s) - 1 - b.
-    for b in mul_range(1, GEN ** (2 ** (7 - s))):
-        z = (zt * GEN ** (REC * (2 ** (8 - s) - 1))) / b ** REC
-        base = b ** (REC * 2 ** (s + 1))
-        intt_block(src * base, dst * base, z[1], z[GEN], tb, s)
+    if const(s != 0):
+        for b in mul_range(1, GEN ** (2 ** (7 - s))):
+            z = (zt * GEN ** (REC * (2 ** (8 - s) - 1))) / b ** REC
+            base = b ** (REC * 2 ** (s + 1))
+            gs_run(src * base, dst * base, z[1], z[GEN], tb, GEN ** (2 ** (s - 1)), GEN ** (REC * 2 ** s))
+    else:
+        for b in mul_range(1, GEN ** 64):
+            z = (zt * GEN ** (REC * 255)) / (b * b) ** REC
+            base = b ** (4 * REC)
+            gs_one(src * base, dst * base, z[1], z[GEN], tb, GEN ** REC)
+            z2 = z / GEN ** REC
+            gs_one(src * base * GEN ** (2 * REC), dst * base * GEN ** (2 * REC), z2[1], z2[GEN], tb, GEN ** REC)
     return
 
 

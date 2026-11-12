@@ -138,24 +138,38 @@ fn rej_ntt_poly(rho: &[u8], s: u8, r: u8) -> ([u32; 256], usize, usize, Vec<u8>)
     (out, c / 56 + 1, c, stream)
 }
 
+fn zt_cells() -> Vec<F192> {
+    mq::zetas().iter().flat_map(|&z| mq::record(z)).collect()
+}
+
+pub fn bt_cells() -> Vec<F192> {
+    (0..256).map(lane_f).collect()
+}
+
 impl Scheme for MlDsa44 {
     type Item = MlDsaItem;
     const NAME: &'static str = "mldsa44";
 
     fn source() -> String {
-        format!("ZT = ZT_PLACEHOLDER\nFINV_REC = FINV_REC_PLACEHOLDER\n{ARITH}\n{LANES}\n{GUEST}")
+        format!("FINV_REC = FINV_REC_PLACEHOLDER\n{ARITH}\n{LANES}\n{GUEST}")
     }
 
     fn placeholders(ps: &mut BTreeMap<String, String>) {
-        ps.insert("ZT".into(), mq::records(&mq::zetas()));
+        crate::checked_placeholders(ps, "ZT", &zt_cells());
         ps.insert("FINV_REC".into(), mq::records(&[mq::FINV]));
         let tag = cell(CLAIM_TAG);
         ps.insert("CLAIM_TAG_0".into(), tag.c0.to_string());
         ps.insert("CLAIM_TAG_1".into(), tag.c1.to_string());
-        ps.insert("BT".into(), flds(&(0..256).map(lane_f).collect::<Vec<_>>()));
+        crate::checked_placeholders(ps, "BT", &bt_cells());
         let crv = [0, 1, 0, 0, 0, 2046, 0, 1, (Q - 1) as usize].map(count);
         ps.insert("CRV".into(), flds(&crv));
-        ps.insert("WT".into(), flds(&w_tables()));
+        crate::checked_placeholders(ps, "WT", &w_tables());
+    }
+
+    fn setup_hints(hints: &mut Hints) {
+        crate::push_checked(hints, &zt_cells());
+        crate::push_checked(hints, &bt_cells());
+        crate::push_checked(hints, &w_tables());
     }
 
     fn claim(item: &MlDsaItem) -> Claim {

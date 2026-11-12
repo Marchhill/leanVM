@@ -21,22 +21,27 @@ CRF_OFF = 498
 W_OFF = 501
 W_LEN = 356
 AUX_SIZE = 2281
-BT = BT_PLACEHOLDER
 CRV = CRV_PLACEHOLDER
-WT = WT_PLACEHOLDER
+ZT_PAIRS = ZT_PAIRS_PLACEHOLDER
+ZT_D0 = ZT_D0_PLACEHOLDER
+ZT_D1 = ZT_D1_PLACEHOLDER
+BT_PAIRS = BT_PAIRS_PLACEHOLDER
+BT_D0 = BT_D0_PLACEHOLDER
+BT_D1 = BT_D1_PLACEHOLDER
+WT_PAIRS = WT_PAIRS_PLACEHOLDER
+WT_D0 = WT_D0_PLACEHOLDER
+WT_D1 = WT_D1_PLACEHOLDER
 
 
 def setup_scheme():
     tb = build_tables()
     zt = HeapBuf(POLY_CELLS)
-    for k in unroll(0, POLY_CELLS):
-        zt[GEN ** k] = ZT[k]
+    load_checked(zt, GEN ** ZT_PAIRS, ZT_D0, ZT_D1)
     finv = HeapBuf(REC)
     for k in unroll(0, REC):
         finv[GEN ** k] = FINV_REC[k]
     aux = HeapBuf(AUX_SIZE)
-    for v in unroll(0, 256):
-        aux[GEN ** (BT_OFF + v)] = BT[v]
+    load_checked(aux * GEN ** BT_OFF, GEN ** BT_PAIRS, BT_D0, BT_D1)
     aux[GEN ** S16_OFF] = 1
     for v in mul_range(1, GEN ** 127):
         aux[GEN ** (S16_OFF + 1) * v] = aux[GEN ** S16_OFF * v] * GEN ** 16
@@ -51,8 +56,7 @@ def setup_scheme():
     aux[GEN ** (NZ_OFF + 2)] = GEN
     for v in unroll(0, 9):
         aux[GEN ** (CR0_OFF + v)] = CRV[v]
-    for v in unroll(0, 5 * W_LEN):
-        aux[GEN ** (W_OFF + v)] = WT[v]
+    load_checked(aux * GEN ** W_OFF, GEN ** WT_PAIRS, WT_D0, WT_D1)
     ctx = HeapBuf(4)
     ctx[1] = tb
     ctx[GEN] = aux
@@ -415,7 +419,7 @@ def verify_claim(ctx):
     hc[1] = 1
     for k in mul_range(1, GEN ** 1024):
         x = hh[k]
-        hh[k] = x * x
+        assert x * x == x
         hc[k * GEN] = hc[k] * (1 + x * (GEN + 1))
     assert log(hc[GEN ** 1024]) < 81
 

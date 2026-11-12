@@ -59,9 +59,26 @@ def lane_bits(lane, bits):
     acc = 0
     for b in unroll(0, 64):
         x = bits[GEN ** b]
-        bits[GEN ** b] = x * x
+        assert x * x == x
         acc += x * COORD_BASIS[b]
     assert acc == lane
     return
 
 
+
+
+def load_checked(dst, npairs_g, d0, d1):
+    # dst[0 .. 2 npairs) <- hinted constant cells, bound by a BLAKE2s chain from zero to (d0, d1).
+    # Keeps large constant tables out of the program text (whose size drives recursion cost).
+    h = HeapBuf(npairs_g ** 2 * GEN ** 2)
+    h[1] = 0
+    h[GEN] = 0
+    for i in mul_range(1, npairs_g):
+        pair = dst * i ** 2
+        hint_witness(pair[0:2], "table_cells")
+        cur = h * i ** 2
+        blake2s([cur[1], cur[GEN]], [pair[1], pair[GEN]], (h * (i * GEN) ** 2)[0:2])
+    fin = h * npairs_g ** 2
+    assert fin[1] == d0
+    assert fin[GEN] == d1
+    return

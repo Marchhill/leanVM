@@ -10,7 +10,7 @@ use tide_fn_dsa::{
 };
 
 use crate::mldsa::{LANES, bit, lane_f, lanes, push_bytes};
-use crate::{Claim, Hints, Scheme, cell, count, flds};
+use crate::{Claim, Hints, Scheme, cell, count};
 
 const GUEST: &str = include_str!("../guests/falcon.py");
 pub const CLAIM_TAG: &[u8; 16] = b"EIP8288:fn512:v1";
@@ -187,6 +187,10 @@ fn decode_s2(buf: &[u8]) -> Vec<i32> {
         .collect()
 }
 
+fn zt_cells() -> Vec<F192> {
+    zetas().iter().map(|&z| count(z as usize)).collect()
+}
+
 impl Scheme for Falcon512 {
     type Item = FalconItem;
     const NAME: &'static str = "falcon512";
@@ -199,13 +203,15 @@ impl Scheme for Falcon512 {
         let tag = cell(CLAIM_TAG);
         ps.insert("CLAIM_TAG_0".into(), tag.c0.to_string());
         ps.insert("CLAIM_TAG_1".into(), tag.c1.to_string());
-        ps.insert("FBT".into(), flds(&(0..256).map(lane_f).collect::<Vec<_>>()));
-        ps.insert(
-            "FZT".into(),
-            flds(&zetas().iter().map(|&z| count(z as usize)).collect::<Vec<_>>()),
-        );
+        crate::checked_placeholders(ps, "FBT", &crate::mldsa::bt_cells());
+        crate::checked_placeholders(ps, "FZT", &zt_cells());
         let ninv = count(NINV as usize);
         ps.insert("FNINV".into(), crate::f192_literal(ninv));
+    }
+
+    fn setup_hints(hints: &mut Hints) {
+        crate::push_checked(hints, &crate::mldsa::bt_cells());
+        crate::push_checked(hints, &zt_cells());
     }
 
     fn claim(item: &FalconItem) -> Claim {

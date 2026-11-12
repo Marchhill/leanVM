@@ -13,7 +13,7 @@ FQ = 12289
 FN = 512
 F_NEG = 12288
 F_OFF = F_NEG
-F_SIZE = 36867
+F_SIZE = 36873
 QT_OFF = F_SIZE
 TB_SIZE = QT_OFF + FQ
 # aux: byte bit patterns, then 256^v
@@ -21,29 +21,49 @@ FBT_OFF = 0
 FS256_OFF = 256
 FAUX_SIZE = 512
 NORM_BOUND = 34034726
-FBT = FBT_PLACEHOLDER
-FZT = FZT_PLACEHOLDER
+FBT_PAIRS = FBT_PAIRS_PLACEHOLDER
+FBT_D0 = FBT_D0_PLACEHOLDER
+FBT_D1 = FBT_D1_PLACEHOLDER
+FZT_PAIRS = FZT_PAIRS_PLACEHOLDER
+FZT_D0 = FZT_D0_PLACEHOLDER
+FZT_D1 = FZT_D1_PLACEHOLDER
 FNINV = FNINV_PLACEHOLDER
 
 
 def fq_tables(tb):
-    # F[y] for y in [-12288, 24577]: F[y + 1] = F[y] g^floor((y+1)/2); QT[k] = g^(q k).
+    # F[y] = g^floor(y^2/4) for y in [-12288, 24584], stepping F[y + 1] = F[y] g^floor((y+1)/2),
+    # four pairs (y = 2m, 2m+1) per iteration; QT[k] = g^(q k), eight per iteration.
     f = tb * GEN ** F_OFF
     f[1] = 1
-    for k in mul_range(1, GEN ** 12289):
-        k2 = k * k
-        odd = f[k2] * k
-        f[k2 * GEN] = odd
-        f[k2 * GEN ** 2] = odd * k * GEN
-    for k in mul_range(1, GEN ** 6144):
-        nk = GEN ** (F_NEG - 2) / (k * k)
-        odd = tb[nk * GEN ** 2] * k
-        tb[nk * GEN] = odd
-        tb[nk] = odd * k * GEN
+    for k in mul_range(1, GEN ** 3073):
+        k4 = k ** 4
+        base = f * k4 * k4
+        cur = base[1]
+        for q in unroll(0, 4):
+            gm = k4 * GEN ** q
+            odd = cur * gm
+            base[GEN ** (2 * q + 1)] = odd
+            cur = odd * gm * GEN
+            base[GEN ** (2 * q + 2)] = cur
+    for k in mul_range(1, GEN ** 1536):
+        k4 = k ** 4
+        # The base sits eight entries below F[-8k], so every offset is nonnegative.
+        nb = tb * (GEN ** (F_NEG - 8) / (k4 * k4))
+        cur = nb[GEN ** 8]
+        for q in unroll(0, 4):
+            gm = k4 * GEN ** q
+            odd = cur * gm
+            nb[GEN ** (7 - 2 * q)] = odd
+            cur = odd * gm * GEN
+            nb[GEN ** (6 - 2 * q)] = cur
     qt = tb * GEN ** QT_OFF
     qt[1] = 1
-    for k in mul_range(1, GEN ** (FQ - 1)):
-        qt[k * GEN] = qt[k] * GEN ** FQ
+    for k in mul_range(1, GEN ** 1536):
+        base = qt * k ** 8
+        cur = base[1]
+        for q in unroll(0, 8):
+            cur = cur * GEN ** FQ
+            base[GEN ** (q + 1)] = cur
     return
 
 
@@ -51,14 +71,12 @@ def setup_scheme():
     tb = HeapBuf(TB_SIZE)
     fq_tables(tb)
     aux = HeapBuf(FAUX_SIZE)
-    for v in unroll(0, 256):
-        aux[GEN ** (FBT_OFF + v)] = FBT[v]
+    load_checked(aux * GEN ** FBT_OFF, GEN ** FBT_PAIRS, FBT_D0, FBT_D1)
     aux[GEN ** FS256_OFF] = 1
     for v in mul_range(1, GEN ** 255):
         aux[GEN ** (FS256_OFF + 1) * v] = aux[GEN ** FS256_OFF * v] * GEN ** 256
     zt = HeapBuf(FN)
-    for k in unroll(0, FN):
-        zt[GEN ** k] = FZT[k]
+    load_checked(zt, GEN ** FZT_PAIRS, FZT_D0, FZT_D1)
     ctx = HeapBuf(3)
     # The F table's centre as a stored pointer: F[y] = tb[g^y] for negative y too.
     fb = tb * GEN ** F_OFF
