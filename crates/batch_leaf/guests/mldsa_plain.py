@@ -1,6 +1,10 @@
 # ML-DSA-44 (FIPS 204, pure, empty context) claim:
 # claim = Keccak-256(CLAIM_TAG || pk || M), pk the 1312-byte encoded key, M 32 bytes.
 
+def setup_scheme():
+    return mldsa_setup()
+
+
 def verify_claim(ctx):
     aux = ctx[GEN]
 

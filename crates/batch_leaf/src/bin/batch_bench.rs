@@ -113,6 +113,7 @@ fn main() {
         "falcon512" => run::<batch_leaf::falcon::Falcon512>(n, repeat, batch_leaf::falcon::items),
         "null" => run::<batch_leaf::null_leaf::Null>(n, repeat, batch_leaf::null_leaf::items),
         "slhdsa128s" => run::<batch_leaf::slhdsa::SlhDsaShake128s>(n, repeat, batch_leaf::slhdsa::items),
+        "mldsa44wa" => run::<batch_leaf::webauthn::MlDsa44WebAuthn>(n, repeat, batch_leaf::webauthn::items),
         other => panic!("unknown scheme {other}"),
     }
 }

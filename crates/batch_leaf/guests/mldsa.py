@@ -33,7 +33,7 @@ WT_D0 = WT_D0_PLACEHOLDER
 WT_D1 = WT_D1_PLACEHOLDER
 
 
-def setup_scheme():
+def mldsa_setup():
     tb = build_tables()
     zt = HeapBuf(POLY_CELLS)
     load_checked(zt, GEN ** ZT_PAIRS, ZT_D0, ZT_D1)

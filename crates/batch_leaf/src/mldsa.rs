@@ -181,16 +181,20 @@ impl Scheme for MlDsa44 {
     }
 
     fn push_hints(item: &MlDsaItem, hints: &mut Hints) {
-        let (pk, sig, msg) = (&item.pk, &item.sig, &item.msg);
-        hints.push("ml_pk", lanes(pk).into_iter().map(lane_f).collect());
-        hints.push("ml_msg", lanes(msg).into_iter().map(lane_f).collect());
+        hints.push("ml_pk", lanes(&item.pk).into_iter().map(lane_f).collect());
+        hints.push("ml_msg", lanes(&item.msg).into_iter().map(lane_f).collect());
+        push_bytes(hints, &item.msg);
+        push_core_hints(&item.pk, &item.msg, &item.sig, hints);
+    }
+}
 
-        // tr, mu; the message bytes feed mu's shifted lanes.
+/// The hints of `mldsa_core` for a signature on `msg`, after the caller's own.
+pub fn push_core_hints(pk: &[u8], msg: &[u8], sig: &[u8], hints: &mut Hints) {
+    {
         let mut tr = [0u8; 64];
         shake256(&[pk], &mut tr);
         let mut mu = [0u8; 64];
         shake256(&[&tr, &[0, 0], msg], &mut mu);
-        push_bytes(hints, msg);
 
         // SampleInBall.
         let ctilde = &sig[..32];
