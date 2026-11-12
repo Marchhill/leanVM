@@ -1,0 +1,19 @@
+[package]
+name = "batch_leaf"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+primitives.workspace = true
+lean_vm.workspace = true
+lean_compiler.workspace = true
+rec_aggregation.workspace = true
+xmss.workspace = true
+sphincs.workspace = true
+bincode.workspace = true
+serde.workspace = true
+rand.workspace = true

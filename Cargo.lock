@@ -423,6 +423,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
+name = "batch_leaf"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "lean_compiler",
+ "lean_vm",
+ "primitives",
+ "rand 0.9.4",
+ "rec_aggregation",
+ "serde",
+ "sphincs",
+ "xmss",
+]
+
+[[package]]
 name = "bincode"
 version = "1.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
