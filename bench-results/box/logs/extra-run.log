@@ -1,0 +1,8 @@
+keccakf n=1024 rc=0 rss_kb=259520
+keccakf n=4096 rc=0 rss_kb=961432
+keccakf n=16384 rc=0 rss_kb=3834116
+keccakf n=65536 rc=0 rss_kb=15010596
+sphincs-guest n=1 rc=0 	Maximum resident set size (kbytes): 691836
+sphincs-guest n=4 rc=0 	Maximum resident set size (kbytes): 1738080
+sphincs-guest n=16 rc=0 	Maximum resident set size (kbytes): 6100800
+extra-done

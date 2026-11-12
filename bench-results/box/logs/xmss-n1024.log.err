@@ -1,0 +1,23 @@
+	Command being timed: "./target/release/batch_bench xmss 1024 3"
+	User time (seconds): 685.24
+	System time (seconds): 238.34
+	Percent of CPU this job got: 413%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 3:43.28
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 15830772
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 395423
+	Minor (reclaiming a frame) page faults: 5842045
+	Voluntary context switches: 405843
+	Involuntary context switches: 36143
+	Swaps: 0
+	File system inputs: 15928200
+	File system outputs: 2640
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

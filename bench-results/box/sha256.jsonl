@@ -1,0 +1,9 @@
+{"scheme":"sha256","n":1,"run":0,"prove_s":0.5960,"verify_ms":0,"base_counts":[40169, 61330, 20956, 38624, 1628, 0, 0],"base_cycles":162707,"cycles":233488,"committed":4336088,"peak_rss_kb":407928,"rc":0}
+{"scheme":"sha256","n":1,"run":1,"prove_s":0.6218,"verify_ms":0,"base_counts":[40169, 61330, 20956, 38624, 1628, 0, 0],"base_cycles":162707,"cycles":233488,"committed":4336088,"peak_rss_kb":407928,"rc":0}
+{"scheme":"sha256","n":1,"run":2,"prove_s":0.5935,"verify_ms":0,"base_counts":[40169, 61330, 20956, 38624, 1628, 0, 0],"base_cycles":162707,"cycles":233488,"committed":4336088,"peak_rss_kb":407928,"rc":0}
+{"scheme":"sha256","n":4,"run":0,"prove_s":2.4963,"verify_ms":0,"base_counts":[158276, 238414, 80963, 149291, 6359, 0, 0],"base_cycles":633303,"cycles":933904,"committed":17287640,"peak_rss_kb":1526816,"rc":0}
+{"scheme":"sha256","n":4,"run":1,"prove_s":2.3844,"verify_ms":0,"base_counts":[158276, 238414, 80963, 149291, 6359, 0, 0],"base_cycles":633303,"cycles":933904,"committed":17287640,"peak_rss_kb":1526816,"rc":0}
+{"scheme":"sha256","n":4,"run":2,"prove_s":2.2919,"verify_ms":0,"base_counts":[158276, 238414, 80963, 149291, 6359, 0, 0],"base_cycles":633303,"cycles":933904,"committed":17287640,"peak_rss_kb":1526816,"rc":0}
+{"scheme":"sha256","n":16,"run":0,"prove_s":9.5775,"verify_ms":0,"base_counts":[630704, 946750, 320987, 591959, 25283, 0, 0],"base_cycles":2515683,"cycles":3735568,"committed":69093848,"peak_rss_kb":6158028,"rc":0}
+{"scheme":"sha256","n":16,"run":1,"prove_s":9.8145,"verify_ms":0,"base_counts":[630704, 946750, 320987, 591959, 25283, 0, 0],"base_cycles":2515683,"cycles":3735568,"committed":69093848,"peak_rss_kb":6158028,"rc":0}
+{"scheme":"sha256","n":16,"run":2,"prove_s":9.4694,"verify_ms":0,"base_counts":[630704, 946750, 320987, 591959, 25283, 0, 0],"base_cycles":2515683,"cycles":3735568,"committed":69093848,"peak_rss_kb":6158028,"rc":0}

@@ -1,0 +1,24 @@
+Command terminated by signal 9
+	Command being timed: "bin/agg_c13m16 r xmss 1 2"
+	User time (seconds): 284.90
+	System time (seconds): 137.18
+	Percent of CPU this job got: 179%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 3:54.51
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 15700264
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 1054779
+	Minor (reclaiming a frame) page faults: 8006522
+	Voluntary context switches: 1077301
+	Involuntary context switches: 33363
+	Swaps: 0
+	File system inputs: 24404032
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

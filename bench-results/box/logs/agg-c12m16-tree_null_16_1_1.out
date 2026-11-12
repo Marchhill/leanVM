@@ -1,0 +1,1 @@
+{"kind":"tree","scheme":"null","n":16,"run":0,"prove_s":376.1019,"verify_ms":28.435,"proof_bytes":292456,"deps":16,"max_claims":16,"code_log":12,"committed_log":22,"peak_rss_gib":12.00,"leaves":16,"claims_per_leaf":1,"guest_depth":5,"leaf_prove_total_s":1.498,"level_prove_s":[299.878,40.033,21.135,9.854,5.202],"wall_s":377.704}

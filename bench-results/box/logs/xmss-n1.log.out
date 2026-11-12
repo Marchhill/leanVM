@@ -1,0 +1,4 @@
+  generating XMSS signers (one-time, then cached): 1/1  generated 1 XMSS in 0.0589 s (cached to disk)                
+{"scheme":"xmss","n":1,"run":0,"threads":"all","prove_s":0.1171,"verify_ms":10.143,"proof_bytes":219224,"base_cycles":4439,"base_counts":[1036, 1133, 888, 1077, 159, 144, 2],"cycles":7688,"committed":715328,"log_mem":17,"mem_used":66286,"bytecode":8192,"compile_s":0.017}
+{"scheme":"xmss","n":1,"run":1,"threads":"all","prove_s":0.1151,"verify_ms":10.223,"proof_bytes":219224,"base_cycles":4439,"base_counts":[1036, 1133, 888, 1077, 159, 144, 2],"cycles":7688,"committed":715328,"log_mem":17,"mem_used":66286,"bytecode":8192,"compile_s":0.017}
+{"scheme":"xmss","n":1,"run":2,"threads":"all","prove_s":0.1201,"verify_ms":10.069,"proof_bytes":219224,"base_cycles":4439,"base_counts":[1036, 1133, 888, 1077, 159, 144, 2],"cycles":7688,"committed":715328,"log_mem":17,"mem_used":66286,"bytecode":8192,"compile_s":0.017}

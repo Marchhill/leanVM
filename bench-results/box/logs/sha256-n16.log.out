@@ -1,0 +1,3 @@
+{"scheme":"sha256","n":16,"run":0,"prove_s":9.5775,"verify_ms":0,"base_counts":[630704, 946750, 320987, 591959, 25283, 0, 0],"base_cycles":2515683,"cycles":3735568,"committed":69093848}
+{"scheme":"sha256","n":16,"run":1,"prove_s":9.8145,"verify_ms":0,"base_counts":[630704, 946750, 320987, 591959, 25283, 0, 0],"base_cycles":2515683,"cycles":3735568,"committed":69093848}
+{"scheme":"sha256","n":16,"run":2,"prove_s":9.4694,"verify_ms":0,"base_counts":[630704, 946750, 320987, 591959, 25283, 0, 0],"base_cycles":2515683,"cycles":3735568,"committed":69093848}

@@ -1,0 +1,4 @@
+falcon512 n=1 rc=0 rss_kb=3359468
+falcon512 n=2 rc=0 rss_kb=4208492
+falcon512 n=4 rc=0 rss_kb=6980356
+falcon512 n=8 rc=0 rss_kb=13456836

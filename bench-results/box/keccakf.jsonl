@@ -1,0 +1,12 @@
+{"scheme":"keccakf","n":1024,"run":0,"prove_s":0.4161,"verify_ms":10.625,"base_counts":[6144, 19456, 7172, 26642, 1027, 0, 1024],"cycles":85000,"committed":2818200,"peak_rss_kb":259520,"rc":0}
+{"scheme":"keccakf","n":1024,"run":1,"prove_s":0.4131,"verify_ms":9.603,"base_counts":[6144, 19456, 7172, 26642, 1027, 0, 1024],"cycles":85000,"committed":2818200,"peak_rss_kb":259520,"rc":0}
+{"scheme":"keccakf","n":1024,"run":2,"prove_s":0.3757,"verify_ms":9.799,"base_counts":[6144, 19456, 7172, 26642, 1027, 0, 1024],"cycles":85000,"committed":2818200,"peak_rss_kb":259520,"rc":0}
+{"scheme":"keccakf","n":4096,"run":0,"prove_s":1.4553,"verify_ms":12.326,"base_counts":[24576, 77824, 28676, 106514, 4099, 0, 4096],"cycles":339976,"committed":11260056,"peak_rss_kb":961432,"rc":0}
+{"scheme":"keccakf","n":4096,"run":1,"prove_s":1.4882,"verify_ms":10.167,"base_counts":[24576, 77824, 28676, 106514, 4099, 0, 4096],"cycles":339976,"committed":11260056,"peak_rss_kb":961432,"rc":0}
+{"scheme":"keccakf","n":4096,"run":2,"prove_s":1.4900,"verify_ms":12.690,"base_counts":[24576, 77824, 28676, 106514, 4099, 0, 4096],"cycles":339976,"committed":11260056,"peak_rss_kb":961432,"rc":0}
+{"scheme":"keccakf","n":16384,"run":0,"prove_s":5.6126,"verify_ms":10.819,"base_counts":[98304, 311296, 114692, 426002, 16387, 0, 16384],"cycles":1359880,"committed":45027480,"peak_rss_kb":3834116,"rc":0}
+{"scheme":"keccakf","n":16384,"run":1,"prove_s":5.8931,"verify_ms":10.438,"base_counts":[98304, 311296, 114692, 426002, 16387, 0, 16384],"cycles":1359880,"committed":45027480,"peak_rss_kb":3834116,"rc":0}
+{"scheme":"keccakf","n":16384,"run":2,"prove_s":5.7281,"verify_ms":10.991,"base_counts":[98304, 311296, 114692, 426002, 16387, 0, 16384],"cycles":1359880,"committed":45027480,"peak_rss_kb":3834116,"rc":0}
+{"scheme":"keccakf","n":65536,"run":0,"prove_s":24.9371,"verify_ms":10.923,"base_counts":[393216, 1245184, 458756, 1703954, 65539, 0, 65536],"cycles":5439496,"committed":180097176,"peak_rss_kb":15010596,"rc":0}
+{"scheme":"keccakf","n":65536,"run":1,"prove_s":24.9910,"verify_ms":18.825,"base_counts":[393216, 1245184, 458756, 1703954, 65539, 0, 65536],"cycles":5439496,"committed":180097176,"peak_rss_kb":15010596,"rc":0}
+{"scheme":"keccakf","n":65536,"run":2,"prove_s":24.3718,"verify_ms":13.286,"base_counts":[393216, 1245184, 458756, 1703954, 65539, 0, 65536],"cycles":5439496,"committed":180097176,"peak_rss_kb":15010596,"rc":0}

@@ -1,0 +1,9 @@
+  generating SPHINCS signers (one-time, then cached): 1/12  generating SPHINCS signers (one-time, then cached): 2/12  generating SPHINCS signers (one-time, then cached): 3/12  generating SPHINCS signers (one-time, then cached): 4/12  generating SPHINCS signers (one-time, then cached): 5/12  generating SPHINCS signers (one-time, then cached): 6/12  generating SPHINCS signers (one-time, then cached): 7/12  generating SPHINCS signers (one-time, then cached): 8/12  generating SPHINCS signers (one-time, then cached): 9/12  generating SPHINCS signers (one-time, then cached): 10/12  generating SPHINCS signers (one-time, then cached): 11/12  generating SPHINCS signers (one-time, then cached): 12/12  generated 12 SPHINCS in 0.11 s (cached to disk)              
+
+aggregation, 16 SPHINCS signatures
+  cycles (VM steps)           : 228,485 = 2^17.802
+    details                   : SET 2^15.873 (26.3%)  XOR 2^15.867 (26.1%)  MUL 2^15.39 (18.8%)  DEREF 2^14.847 (12.9%)  SHA3 2^14.659 (11.3%)  JUMP 2^13.344 (4.5%)  BLAKE2S 2^5.728 (0.0%)  MEMORY 2^18.239  TOTAL_COMMITTED 2^25.279
+  proof size                  : 289.9 KiB
+  proving time                : 6.192 s ± 1.9%      peak memory 5.817 GiB
+  per signature               : 2.584 signatures/s
+  verifying                   : 26.536 ms

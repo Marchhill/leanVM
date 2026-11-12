@@ -1,0 +1,3 @@
+{"scheme":"keccakf","n":1024,"run":0,"prove_s":0.4161,"verify_ms":10.625,"base_counts":[6144, 19456, 7172, 26642, 1027, 0, 1024],"cycles":85000,"committed":2818200}
+{"scheme":"keccakf","n":1024,"run":1,"prove_s":0.4131,"verify_ms":9.603,"base_counts":[6144, 19456, 7172, 26642, 1027, 0, 1024],"cycles":85000,"committed":2818200}
+{"scheme":"keccakf","n":1024,"run":2,"prove_s":0.3757,"verify_ms":9.799,"base_counts":[6144, 19456, 7172, 26642, 1027, 0, 1024],"cycles":85000,"committed":2818200}

@@ -1,0 +1,3 @@
+{"kind":"r","scheme":"null","n":1,"run":0,"prove_s":18.0589,"verify_ms":41.736,"proof_bytes":331192,"deps":1,"max_claims":16,"code_log":12,"committed_log":22,"peak_rss_gib":11.63,"leaf_s":0.116}
+{"kind":"r","scheme":"null","n":1,"run":1,"prove_s":19.0281,"verify_ms":35.807,"proof_bytes":331192,"deps":1,"max_claims":16,"code_log":12,"committed_log":22,"peak_rss_gib":11.88,"leaf_s":0.116}
+{"kind":"r","scheme":"null","n":1,"run":2,"prove_s":20.0361,"verify_ms":38.370,"proof_bytes":331192,"deps":1,"max_claims":16,"code_log":12,"committed_log":22,"peak_rss_gib":11.92,"leaf_s":0.116}
