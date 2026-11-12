@@ -434,6 +434,7 @@ dependencies = [
  "rand 0.9.4",
  "rec_aggregation",
  "serde",
+ "sha2",
  "sha3 0.10.9",
  "sphincs",
  "tide-fn-dsa",
