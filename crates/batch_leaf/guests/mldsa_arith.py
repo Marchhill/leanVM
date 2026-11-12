@@ -251,24 +251,29 @@ def ntt(src, tb, zt):
 
 
 @inline
-def gs_one(a, da, z0, z1, tb, off):
-    # Gentleman-Sande with z = -zeta: (a, b) <- (a + b, zeta (b - a)).
+def gs_one(a, da, z0, z1, tb, off, last: Const):
+    # Gentleman-Sande with z = -zeta: (a, b) <- (a + b, zeta (b - a)). Only the last layer's
+    # outputs need limbs (the scaling multiplies them); earlier ones keep just g^r.
     b = a * off
     ga = a[GEN ** 2]
     gb = b[GEN ** 2]
     u = mq_can(ga * gb, tb)
-    put_rec(da, u)
     d = mq_can(gb * GEN ** (2 * Q_MOD) / ga, tb)
     v = mq_red(mq_prod(z0, z1, d[0], d[1], tb), tb)
-    put_rec(da * off, v)
+    if const(last == 1):
+        put_rec(da, u)
+        put_rec(da * off, v)
+    else:
+        da[GEN ** 2] = u[2]
+        (da * off)[GEN ** 2] = v[2]
     return
 
 
-def gs_run(sa, da, z0, z1, tb, npairs_g, off):
+def gs_run(sa, da, z0, z1, tb, npairs_g, off, last: Const):
     for j in mul_range(1, npairs_g):
         o = j ** (2 * REC)
-        gs_one(sa * o, da * o, z0, z1, tb, off)
-        gs_one(sa * o * GEN ** REC, da * o * GEN ** REC, z0, z1, tb, off)
+        gs_one(sa * o, da * o, z0, z1, tb, off, last)
+        gs_one(sa * o * GEN ** REC, da * o * GEN ** REC, z0, z1, tb, off, last)
     return
 
 
@@ -278,14 +283,14 @@ def intt_layer(src, dst, tb, zt, s: Const):
         for b in mul_range(1, GEN ** (2 ** (7 - s))):
             z = (zt * GEN ** (REC * (2 ** (8 - s) - 1))) / b ** REC
             base = b ** (REC * 2 ** (s + 1))
-            gs_run(src * base, dst * base, z[1], z[GEN], tb, GEN ** (2 ** (s - 1)), GEN ** (REC * 2 ** s))
+            gs_run(src * base, dst * base, z[1], z[GEN], tb, GEN ** (2 ** (s - 1)), GEN ** (REC * 2 ** s), s // 7)
     else:
         for b in mul_range(1, GEN ** 64):
             z = (zt * GEN ** (REC * 255)) / (b * b) ** REC
             base = b ** (4 * REC)
-            gs_one(src * base, dst * base, z[1], z[GEN], tb, GEN ** REC)
+            gs_one(src * base, dst * base, z[1], z[GEN], tb, GEN ** REC, 0)
             z2 = z / GEN ** REC
-            gs_one(src * base * GEN ** (2 * REC), dst * base * GEN ** (2 * REC), z2[1], z2[GEN], tb, GEN ** REC)
+            gs_one(src * base * GEN ** (2 * REC), dst * base * GEN ** (2 * REC), z2[1], z2[GEN], tb, GEN ** REC, 0)
     return
 
 
