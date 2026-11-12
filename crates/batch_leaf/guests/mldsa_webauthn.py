@@ -19,6 +19,7 @@ WA_CROSS_KEY = WA_CROSS_KEY_PLACEHOLDER
 WA_ORIGIN_AT = 91
 WA_ORIGIN_MAX = 64
 WA_CLOSE = WA_CLOSE_PLACEHOLDER
+WA_BACKSLASH = WA_BACKSLASH_PLACEHOLDER
 WA_COMMA = WA_COMMA_PLACEHOLDER
 WA_MAX_BLOCKS = 6
 WA_QUOTE = WA_QUOTE_PLACEHOLDER
@@ -150,6 +151,9 @@ def verify_claim(ctx):
     src = pb * GEN ** WA_ORIGIN_AT
     for j in mul_range(1, lo):
         assert ob[j] == src[j]
+        # no quote or backslash inside, so the span is the value a JSON parser reads
+        assert src[j] != WA_QUOTE
+        assert src[j] != WA_BACKSLASH
     for j in mul_range(1, GEN ** WA_ORIGIN_MAX / lo):
         assert ob[lo * j] == 1
     after = src * lo

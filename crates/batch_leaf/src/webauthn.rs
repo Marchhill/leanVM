@@ -126,6 +126,24 @@ fn kt_cells() -> Vec<F192> {
     crate::sha256::K_PUB.iter().map(|&k| count(k as usize)).collect()
 }
 
+/// The claim for a given origin value (normally `origin(clientDataJSON)`).
+pub fn claim_with_origin(item: &WebAuthnItem, o: &[u8]) -> Claim {
+    let mut b = CLAIM_TAG.to_vec();
+    b.extend_from_slice(&item.pk);
+    b.extend_from_slice(&item.challenge);
+    b.extend_from_slice(&item.rp_id_hash);
+    let mut policy = [0u8; 16];
+    policy[0] = POLICY;
+    b.extend_from_slice(&policy);
+    let mut len = [0u8; 16];
+    len[0] = o.len() as u8;
+    b.extend_from_slice(&len);
+    let mut padded = [0u8; ORIGIN_MAX];
+    padded[..o.len()].copy_from_slice(o);
+    b.extend_from_slice(&padded);
+    primitives::keccak::keccak256(&b)
+}
+
 impl Scheme for MlDsa44WebAuthn {
     type Item = WebAuthnItem;
     const NAME: &'static str = "mldsa44wa";
@@ -155,6 +173,7 @@ impl Scheme for MlDsa44WebAuthn {
         ps.insert("WA_CROSS_KEY".into(), crate::f192_literal(cell(&cross)));
         ps.insert("WA_CLOSE".into(), crate::f192_literal(count(b'}' as usize)));
         ps.insert("WA_COMMA".into(), crate::f192_literal(count(b',' as usize)));
+        ps.insert("WA_BACKSLASH".into(), crate::f192_literal(count(b'\\' as usize)));
         crate::checked_placeholders(ps, "WA_B64", &b64_tables());
         crate::checked_placeholders(ps, "WA_KT", &kt_cells());
         ps.insert("SHA_IVG".into(), crate::sha256::gpow_list(&crate::sha256::IV));
@@ -167,21 +186,7 @@ impl Scheme for MlDsa44WebAuthn {
     }
 
     fn claim(item: &WebAuthnItem) -> Claim {
-        let mut b = CLAIM_TAG.to_vec();
-        b.extend_from_slice(&item.pk);
-        b.extend_from_slice(&item.challenge);
-        b.extend_from_slice(&item.rp_id_hash);
-        let mut policy = [0u8; 16];
-        policy[0] = POLICY;
-        b.extend_from_slice(&policy);
-        let o = origin(&item.client_data_json);
-        let mut len = [0u8; 16];
-        len[0] = o.len() as u8;
-        b.extend_from_slice(&len);
-        let mut padded = [0u8; ORIGIN_MAX];
-        padded[..o.len()].copy_from_slice(o);
-        b.extend_from_slice(&padded);
-        primitives::keccak::keccak256(&b)
+        claim_with_origin(item, origin(&item.client_data_json))
     }
 
     fn push_hints(item: &WebAuthnItem, hints: &mut Hints) {
@@ -267,6 +272,18 @@ mod tests {
             );
         }
     }
+}
+
+#[cfg(test)]
+fn item_clone(item: &WebAuthnItem) -> Box<WebAuthnItem> {
+    Box::new(WebAuthnItem {
+        pk: item.pk,
+        challenge: item.challenge,
+        rp_id_hash: item.rp_id_hash,
+        sign_count: item.sign_count,
+        client_data_json: item.client_data_json.clone(),
+        sig: item.sig,
+    })
 }
 
 #[cfg(test)]
@@ -356,5 +373,27 @@ mod soundness {
             let (_, h, pi, _) = witness::<MlDsa44WebAuthn>(items_with(1, &origin, tail));
             assert!(proves(&program, &h, pi), "an absent crossOrigin must prove ({tail})");
         }
+        // A hinted origin span running past the real closing quote, onto a later quote that is
+        // followed by ,"crossOrigin":false: a parser differential the byte check must stop.
+        let item = &items_with(1, &origin, r#","q":"a","crossOrigin":false"#)[0];
+        let (_, mut h, pi, _) = witness::<MlDsa44WebAuthn>(vec![*item_clone(item)]);
+        assert!(proves(&program, &h, pi), "the honest parse proves");
+        let cdj = &item.client_data_json;
+        let end = cdj
+            .windows(20)
+            .position(|w| w == br#"","crossOrigin":fals"#.as_slice())
+            .unwrap();
+        let long = &cdj[ORIGIN_AT..end];
+        h.0.get_mut("wa_origin_len").unwrap()[0] = vec![count(long.len())];
+        h.0.get_mut("wa_origin").unwrap()[0] = (0..ORIGIN_MAX)
+            .map(|j| count(long.get(j).copied().unwrap_or(0) as usize))
+            .collect();
+        h.0.get_mut("wa_is_cross").unwrap()[0] = vec![F192::ONE];
+        let long_pi = crate::public_input(&crate::batch_hash(&[claim_with_origin(item, long)]));
+        assert!(
+            !proves(&program, &h, long_pi),
+            "an origin span past the closing quote still proves"
+        );
+        println!("origin span past the closing quote: rejected");
     }
 }
