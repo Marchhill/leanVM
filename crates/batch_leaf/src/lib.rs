@@ -7,6 +7,10 @@
 //! placeholders, and per-claim hint streams. The batch size is a hint, so one compiled
 //! program, i.e. one verification key, covers every batch size up to `MAX_CLAIMS`.
 
+pub mod mldsa;
+pub mod mq;
+#[cfg(test)]
+mod mq_guest;
 pub mod xmss_leaf;
 
 use std::collections::BTreeMap;

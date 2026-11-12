@@ -5,7 +5,11 @@
 CLAIM_TAG = CLAIM_TAG_PLACEHOLDER
 
 
-def verify_claim():
+def setup_scheme():
+    return 0
+
+
+def verify_claim(ctx):
     pk = HeapBuf(2)
     hint_witness(pk[0:2], "pk")
     message = HeapBuf(2)

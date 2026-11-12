@@ -43,6 +43,7 @@ fn main() {
     lean_vm::init_prover();
     match scheme {
         "xmss" => run::<batch_leaf::xmss_leaf::Xmss>(n, repeat, batch_leaf::xmss_leaf::items),
+        "mldsa44" => run::<batch_leaf::mldsa::MlDsa44>(n, repeat, batch_leaf::mldsa::items),
         other => panic!("unknown scheme {other}"),
     }
 }

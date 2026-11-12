@@ -90,8 +90,9 @@ def main():
     lanes[1] = TAG_0
     lanes[GEN] = TAG_1
     body = lanes * GEN ** 2
+    ctx = setup_scheme()
     for i in mul_range(1, n):
-        c0, c1 = verify_claim()
+        c0, c1 = verify_claim(ctx)
         dst = body * i ** 4
         put_cell(c0, dst)
         put_cell(c1, dst * GEN ** 2)

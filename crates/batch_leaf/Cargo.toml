@@ -17,3 +17,5 @@ sphincs.workspace = true
 bincode.workspace = true
 serde.workspace = true
 rand.workspace = true
+fips204 = { version = "0.4", default-features = false, features = ["default-rng", "ml-dsa-44"] }
+sha3 = "0.10"
