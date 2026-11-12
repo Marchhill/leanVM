@@ -446,12 +446,12 @@ def main():
     nc_g = meta[3]
     assert log(n_g) < MAX_MIXED_DEPENDENCIES + 1
     assert log(ns_g) < 5
-    assert log(ng_g) < 2
-    assert log(nc_g) < 3
-    if nc_g != 1:
-        assert ns_g == 1
-        assert ng_g == 1
-    elif ng_g != 1:
+    assert log(ng_g) < MAX_INNER_PROOFS_PER_STEP + 1
+    assert log(nc_g) < MAX_INNER_PROOFS_PER_STEP + 1
+    # EIP-8288 MAX_INNER_PROOFS_PER_STEP counts leaves and recursive proofs together; raw SPHINCS inputs use their own node.
+    origins_g = ng_g * nc_g
+    assert log(origins_g) < MAX_INNER_PROOFS_PER_STEP + 1
+    if origins_g != 1:
         assert ns_g == 1
     seed = StackBuf(2)
     hint_witness(seed, "fs_seed")
@@ -486,7 +486,6 @@ def main():
         claim[GEN ** 4] = signer[GEN ** 2]
         claim[GEN ** 5] = signer[GEN ** 3]
         raw_marks[raw * GEN] = mixed_cover(claim, selected, n_g, covered, raw_marks[raw])
-    origins_g = ng_g * nc_g
     fresh = HeapBuf(origins_g ** DEFER_SIZE)
     carried = HeapBuf(origins_g ** DEFER_STMT_CELLS)
     inputs = HeapBuf(origins_g ** 2)

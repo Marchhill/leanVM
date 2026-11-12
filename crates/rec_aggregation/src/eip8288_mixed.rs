@@ -8,6 +8,10 @@ pub type Dependency = [u8; 96];
 pub const MAX_DEPENDENCIES: usize = 256;
 /// EIP-8288 `MAX_CLAIMS_PER_BATCH_LEAF` (TBD in the EIP), a guest constant: changing it changes `AGGREGATED_VK`.
 pub const MAX_CLAIMS_PER_BATCH_LEAF: usize = 16;
+/// EIP-8288 `MAX_INNER_PROOFS_PER_STEP` (provisional): leaves and recursive proofs one guest execution verifies.
+pub const MAX_INNER_PROOFS_PER_STEP: usize = 16;
+/// Raw SPHINCS signatures one guest execution verifies, in a node without leaves or recursive proofs.
+pub const MAX_RAW_SIGNATURES: usize = 4;
 pub const MAX_GENERIC_BYTECODE_LOG: usize = 11;
 pub const MAX_GENERIC_COMMITTED_LOG: usize = 22;
 pub const MAX_GENERIC_BUS_LOG: usize = 22;
@@ -260,6 +264,13 @@ mod tests {
                 .is_err()
             );
         }
+        // The aggregation, not the leaf verifier, enforces the claim order: a proof of an unsorted or repeated list's
+        // digest verifies under the leaf key but cannot be aggregated.
+        for claims in [&[b, a][..], &[a, a]] {
+            let proof = leaf_proof(&program, claims);
+            lean_vm::cpu::verify(&program, &batch_statement(claims), &proof).unwrap();
+            assert!(aggregate_mixed(&[], &[], &[leaf_input(&program, &proof, claims)], &deps(&[a]), 1).is_err());
+        }
         let bare = prove(&program, pack_hash_state(&a), 1).unwrap().0;
         assert!(
             aggregate_mixed(
@@ -289,6 +300,63 @@ mod tests {
         assert!(aggregate_mixed(&[], &[], &[over_input], &deps(over), 1).is_err());
         let union = parent(&[wide, direct], &[max, &[a, b, c]].concat());
         assert_eq!(union.dependencies().len(), MAX_CLAIMS_PER_BATCH_LEAF + 3);
+    }
+
+    /// EIP-8288 `MAX_INNER_PROOFS_PER_STEP`: one guest execution verifies a mix of leaves and recursive proofs.
+    ///
+    /// The guest accepts any mix up to 16; the profile's committed-log-27 trace bound admits at most one leaf with two
+    /// children, or seven children. `MIXED_STEP_LEAVES` / `MIXED_STEP_CHILDREN` choose one mix to probe.
+    #[test]
+    #[ignore]
+    fn one_step_verifies_mixed_leaves_and_recursive_proofs() {
+        let probe = std::env::var("MIXED_STEP_LEAVES")
+            .ok()
+            .zip(std::env::var("MIXED_STEP_CHILDREN").ok());
+        let mixes = match probe {
+            Some((leaves, children)) => vec![(leaves.parse().unwrap(), children.parse().unwrap())],
+            None => vec![(1, 2), (0, 7)],
+        };
+        for (leaves, children) in mixes {
+            prove_mixed_step(leaves, children);
+        }
+    }
+
+    fn prove_mixed_step(leaves: usize, children: usize) {
+        let program = any_statement_program(1);
+        let key = generic_verification_key(&program).unwrap();
+        let claim = |i: usize| [i as u8 + 1; 32];
+        let statement = |claims: &[[u8; 32]]| prove(&program, batch_statement(claims), 1).unwrap().0;
+        let child_claims: Vec<[u8; 32]> = (0..children).map(|i| claim(100 + i)).collect();
+        let child = |claims: &[[u8; 32]]| {
+            let proof = statement(claims);
+            let deps: Vec<_> = claims.iter().map(|claim| dep(0x11, *claim, key)).collect();
+            aggregate_mixed(&[], &[], &[leaf_input(&program, &proof, claims)], &deps, 1).unwrap()
+        };
+        let recursive: Vec<MixedProof> = child_claims.chunks(1).map(child).collect();
+        let leaf_claims: Vec<[u8; 32]> = (0..leaves).map(claim).collect();
+        let proofs: Vec<_> = leaf_claims
+            .iter()
+            .map(|claim| statement(std::slice::from_ref(claim)))
+            .collect();
+        let inputs: Vec<_> = leaf_claims
+            .iter()
+            .zip(&proofs)
+            .map(|(claim, proof)| leaf_input(&program, proof, std::slice::from_ref(claim)))
+            .collect();
+        let mut selected: Vec<_> = leaf_claims
+            .iter()
+            .chain(&child_claims)
+            .map(|claim| dep(0x11, *claim, key))
+            .collect();
+        selected.sort();
+        let start = std::time::Instant::now();
+        let step = aggregate_mixed(&recursive, &[], &inputs, &selected, 1).unwrap();
+        eprintln!(
+            "step leaves={leaves} children={children} prove_ms={}",
+            start.elapsed().as_millis()
+        );
+        step.verify().unwrap();
+        verify_mixed_deps(&deps_hash(&selected), &step.to_bytes_without_deps()).unwrap();
     }
 
     #[test]
@@ -532,6 +600,10 @@ mod tests {
         // leanSTARK entries share the list's dependency bound; batch leaves have no separate list cap.
         assert!(check_dependencies(&generic_deps(MAX_DEPENDENCIES)).is_ok());
         assert!(check_dependencies(&generic_deps(MAX_DEPENDENCIES + 1)).is_err());
+        // Lengths beyond the profile's list bound, including 16-bit counter boundaries, are rejected rather than truncated.
+        for count in [65_535, 65_536] {
+            assert!(check_dependencies(&generic_deps(count)).is_err());
+        }
     }
 
     #[test]
@@ -675,6 +747,25 @@ mod tests {
         let mut forged = guest.clone();
         hints.install(&mut forged);
         assert!(std::panic::catch_unwind(|| forged.execute(pack_hash_state(&batch_hash(&[a])))).is_err());
+    }
+
+    /// EIP-8288 Test Case 12: 17 leaves and recursive proofs in one step are rejected before any verification; 16 pass
+    /// the count and fail only on a proof that does not match its claim.
+    #[test]
+    fn inner_proof_count_is_checked_before_verification() {
+        let program = any_statement_program(1);
+        let (proof, _) = prove(&program, batch_statement(&[[0; 32]]), 1).unwrap();
+        let claims: Vec<[u8; 32]> = (0..=MAX_INNER_PROOFS_PER_STEP as u8).map(|i| [i; 32]).collect();
+        let key = generic_verification_key(&program).unwrap();
+        let inputs: Vec<_> = claims
+            .iter()
+            .map(|claim| leaf_input(&program, &proof, std::slice::from_ref(claim)))
+            .collect();
+        let selected =
+            |count: usize| -> Vec<Dependency> { claims[..count].iter().map(|claim| dep(0x11, *claim, key)).collect() };
+        let at = |count: usize| prepare_mixed(&[], &[], &inputs[..count], &selected(count), 1);
+        assert!(matches!(at(MAX_INNER_PROOFS_PER_STEP + 1), Err(MixedError::Capacity)));
+        assert!(matches!(at(MAX_INNER_PROOFS_PER_STEP), Err(MixedError::Proof(_))));
     }
 
     #[test]
@@ -1505,7 +1596,7 @@ fn runtime_guest_source(kbc: usize) -> String {
     let aggregate = source.find("\ndef aggregate_claims(").expect("aggregation sumchecks");
     source.replace_range(main..aggregate, "\n");
     let mut declarations = format!(
-        "N_COORDS = {}\nMAX_MIXED_DEPENDENCIES = {MAX_DEPENDENCIES}\nMAX_CLAIMS_PER_BATCH_LEAF = {MAX_CLAIMS_PER_BATCH_LEAF}\nMAX_GENERIC_CODE_LOG = {MAX_GENERIC_BYTECODE_LOG}\nGENERIC_COMMITTED_LOG = {MAX_GENERIC_COMMITTED_LOG}\nGENERIC_BUS_LOG = {MAX_GENERIC_BUS_LOG}\nMIXED_COMMITTED_LOG = {MAX_MIXED_COMMITTED_LOG}\nMIXED_BUS_LOG = {MAX_MIXED_BUS_LOG}\n",
+        "N_COORDS = {}\nMAX_MIXED_DEPENDENCIES = {MAX_DEPENDENCIES}\nMAX_CLAIMS_PER_BATCH_LEAF = {MAX_CLAIMS_PER_BATCH_LEAF}\nMAX_INNER_PROOFS_PER_STEP = {MAX_INNER_PROOFS_PER_STEP}\nMAX_GENERIC_CODE_LOG = {MAX_GENERIC_BYTECODE_LOG}\nGENERIC_COMMITTED_LOG = {MAX_GENERIC_COMMITTED_LOG}\nGENERIC_BUS_LOG = {MAX_GENERIC_BUS_LOG}\nMIXED_COMMITTED_LOG = {MAX_MIXED_COMMITTED_LOG}\nMIXED_BUS_LOG = {MAX_MIXED_BUS_LOG}\n",
         list_values(&one, "COORD_CONST").len()
     );
     for key in ["BLOCK_KAPPA_ADJ", "COL_KAPPA_ADJ", "COORD_CONST"] {
@@ -1975,11 +2066,9 @@ fn prepare_mixed_with_hints(
     mutate: impl FnOnce(&mut Hints),
 ) -> Result<(Program, DeferredClaim, [F192; 2]), MixedError> {
     check_dependencies(selected)?;
-    if children.len() > 2
-        || raw_sph.len() > 4
-        || raw_generic.len() > 1
-        || usize::from(!children.is_empty()) + usize::from(!raw_sph.is_empty()) + usize::from(!raw_generic.is_empty())
-            > 1
+    if children.len() + raw_generic.len() > MAX_INNER_PROOFS_PER_STEP
+        || raw_sph.len() > MAX_RAW_SIGNATURES
+        || (!raw_sph.is_empty() && children.len() + raw_generic.len() != 0)
         || rate != LOG_INV_RATE
     {
         return Err(MixedError::Capacity);
