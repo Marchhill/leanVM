@@ -215,6 +215,36 @@ pub fn open_batch_mixed_whir_stacked(
     super::whir::recursive_prover_with_prepared_basis(config, log_n, stack, initial_basis, target, prover_data, ps);
 }
 
+/// Open the committed `F64` stack at point claims alone, in one WHIR run: [`open_batch_mixed_whir_stacked`] with no
+/// ring-switched claim, so no linear map is sampled. The verifier's side is `verify_stacked_opening`: one batching
+/// challenge, then WHIR.
+pub fn open_points_whir_stacked(
+    ps: &mut ProverState,
+    log_n: usize,
+    stack: Vec<F64>,
+    prover_data: ProverData,
+    config: &ProverConfig,
+    point_claims: &[StackClaim],
+) {
+    assert!(
+        point_claims.iter().all(|c| c.range().1 <= stack.len()),
+        "every claim must live inside the committed lanes"
+    );
+    let lambdas = powers(ps.sample(), point_claims.len());
+    let target = point_claims
+        .iter()
+        .zip(&lambdas)
+        .map(|(claim, &lambda)| lambda * claim.value())
+        .sum();
+    let lane_vars = log_n - config.initial_k;
+    let no_ring = RingSwitchOpen {
+        offset: 0,
+        claims: Vec::new(),
+    };
+    let initial_basis = basis::initial_basis(&stack, lane_vars, point_claims, &lambdas, &no_ring, &[]);
+    super::whir::recursive_prover_with_prepared_basis(config, log_n, stack, initial_basis, target, prover_data, ps);
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

@@ -21,11 +21,11 @@ mod ring_switch;
 mod transcript;
 mod whir;
 
-pub use bytecode::Bytecode;
+pub use bytecode::{Bytecode, committed_key};
 pub use field::{E, K};
 pub use layout::{
-    MAX_LOG_BYTECODE, MAX_LOG_MEMORY, MAX_STACKED_LOG, MAX_TABLE_LOG, MIN_LOG_MEMORY, MIN_STACKED_LOG, TAG,
-    min_execution_stacked_log,
+    COMMITTED_BYTECODE_LOG_INV_RATE, COMMITTED_TAG, MAX_COMMITTED_BYTECODE_LOG, MAX_LOG_BYTECODE, MAX_LOG_MEMORY,
+    MAX_STACKED_LOG, MAX_TABLE_LOG, MIN_LOG_MEMORY, MIN_STACKED_LOG, TAG, min_execution_stacked_log,
 };
 pub use merkle::MerklePath;
 pub use transcript::Proof;
@@ -140,6 +140,11 @@ fn verify_stacked_opening(
     verify_whir(transcript, stack_log, log_inv_rate, target, root, &evaluate_basis)
 }
 
+/// The log size of the stack a committed table of `len` words is committed in ([`Bytecode::committed`]).
+pub fn committed_bytecode_stack_log(len: usize) -> usize {
+    MIN_STACKED_LOG.max(len.trailing_zeros() as usize)
+}
+
 /// What a walk of the proof leaves behind, for a prover that proves this verification in turn.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Summary {
@@ -149,6 +154,9 @@ pub struct Summary {
     pub log_inv_rate: usize,
     /// Where the bus reads the stacked bytecode. Its value there is the claim an aggregate defers.
     pub bytecode_point: Vec<E>,
+    /// The value a committed program's proof sends there; zero for a table, whose holder evaluates it, so that a
+    /// replay and a verification leave the same summary.
+    pub bytecode_value: E,
     /// The stream positions the Keccak reduction reads.
     pub keccak_scalars: Range<usize>,
 }
@@ -320,12 +328,31 @@ fn walk(bytecode: &Bytecode, public_input: &[u8; 32], proof: &Proof, checked: bo
         log_inverse_rate as usize,
         &stack_claims,
     )?;
+    // 8] A committed program: open its table's commitment at the bus's point, the stack's high coordinates zero.
+    if let Some(bytecode_root) = bytecode.commitment() {
+        let stack_log = committed_bytecode_stack_log(bytecode.len());
+        let mut point = bus.bytecode_point.clone();
+        point.resize(stack_log, ZERO);
+        let claim: StackClaim = (Box::new(move |x| eq_eval(&point, x)), bus.bytecode_value);
+        verify_stacked_opening(
+            &mut transcript,
+            Digest(bytecode_root),
+            stack_log,
+            COMMITTED_BYTECODE_LOG_INV_RATE,
+            &[claim],
+        )?;
+    }
     transcript.finish()?;
     Ok(Summary {
         log_memory: layout.log_memory,
         table_rows,
         log_inv_rate: log_inverse_rate as usize,
         bytecode_point: bus.bytecode_point,
+        bytecode_value: if bytecode.commitment().is_some() {
+            bus.bytecode_value
+        } else {
+            ZERO
+        },
         keccak_scalars,
     })
 }

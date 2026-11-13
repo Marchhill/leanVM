@@ -98,6 +98,7 @@ type Side<'a> = (&'a [BusBlock], &'a BusLayout, Vec<E>, &'a [E], E);
 pub struct BusResult {
     pub claims: Vec<ColumnClaim>,
     pub bytecode_point: Vec<E>, // where the bus reads the stacked bytecode: zeta's low coordinates, then alpha
+    pub bytecode_value: E,      // the stacked bytecode there
     pub point: Vec<E>,          // the GKR point zeta, which the table sumcheck reuses
     pub forms: Vec<Vec<Form>>,  // forms[table][side]
     pub totals: Vec<E>,         // what the tables owe each side, derived
@@ -121,6 +122,19 @@ pub fn verify_bus_balance(layout: &Layout, transcript: &mut Transcript) -> Resul
     // name them: the memory image on push, then each array's final count on pull.
     let memory_low = &point[..layout.log_memory];
     let bytecode_low = &point[..layout.log_bytecode];
+    let bytecode_point = [bytecode_low, &alphas].concat();
+    // A replay leaves the one pass over the table out: the value only feeds the table sumcheck's target, which it does not check.
+    // A committed program's value rides the stream instead, alone in a permutation of its own so that both kinds of
+    // proof absorb what follows at the same rate positions; the walk's last step opens the commitment there.
+    let bytecode_value = if layout.bytecode.commitment().is_some() {
+        let value = transcript.next_scalar()?;
+        transcript.sample();
+        value
+    } else if transcript.checked() {
+        layout.bytecode.evaluate(&bytecode_point)?
+    } else {
+        ZERO
+    };
     let memory = transcript.next_scalars(3)?;
     let memory_final = transcript.next_scalar()?;
     let bytecode_final = transcript.next_scalar()?;
@@ -136,13 +150,6 @@ pub fn verify_bus_balance(layout: &Layout, transcript: &mut Transcript) -> Resul
     claims.push(claim(BYTECODE_FINAL_COUNTERS, bytecode_low, bytecode_final));
     let memory_index = index_mle(memory_low);
     let bytecode_index = index_mle(bytecode_low);
-    let bytecode_point = [bytecode_low, &alphas].concat();
-    // A replay leaves the one pass over the table out: the value only feeds the table sumcheck's target, which it does not check.
-    let bytecode_value = if transcript.checked() {
-        layout.bytecode.evaluate(&bytecode_point)?
-    } else {
-        ZERO
-    };
 
     // The three framework tuples, each its coordinates weighted by eq(alpha, .); slots past the ones
     // named are zero. A side differs only here: push seeds each array at count one, pull finalizes it
@@ -206,6 +213,7 @@ pub fn verify_bus_balance(layout: &Layout, transcript: &mut Transcript) -> Resul
     Ok(BusResult {
         claims,
         bytecode_point,
+        bytecode_value,
         point,
         forms,
         totals,

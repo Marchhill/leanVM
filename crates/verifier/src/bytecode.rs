@@ -2,7 +2,7 @@
 
 use crate::field::{E, ZERO, reduce};
 use crate::hash::{Digest, keccak_hash};
-use crate::layout::TAG;
+use crate::layout::{BUS_BITS, COMMITTED_TAG, TAG};
 use crate::multilinear::eq_kernel;
 use crate::{VerifierError, require};
 
@@ -20,6 +20,8 @@ pub struct Bytecode {
     positions: Vec<u16>,
     /// A byte some word of a block has: which of the word's eight, times 256, plus its value.
     bytes: Vec<u16>,
+    /// The root of the table's commitment ([`Bytecode::committed`]), when the verifier holds that instead of the table.
+    commitment: Option<Digest>,
 }
 
 /// A block with a nonzero word: its index, and where its words and bytes end.
@@ -85,7 +87,38 @@ impl Bytecode {
             words,
             positions,
             bytes,
+            commitment: None,
         }
+    }
+
+    /// A program the verifier knows only by `2^log_instructions` and the root of its stacked table's commitment.
+    ///
+    /// The Fiat-Shamir IV is [`committed_key`]`(log_instructions, root)`. A proof of such a program sends the table's
+    /// value at the bus's point and opens the commitment there, so verifying it never touches the table.
+    pub fn committed(log_instructions: usize, root: [u8; 32]) -> Result<Self, VerifierError> {
+        require(
+            log_instructions + BUS_BITS <= crate::layout::MAX_COMMITTED_BYTECODE_LOG,
+            VerifierError::MultilinearSize,
+        )?;
+        Ok(Self {
+            len: 1 << (log_instructions + BUS_BITS),
+            fiat_shamir_iv: Digest(committed_key(log_instructions, &root)),
+            blocks: Vec::new(),
+            words: Vec::new(),
+            positions: Vec::new(),
+            bytes: Vec::new(),
+            commitment: Some(Digest(root)),
+        })
+    }
+
+    /// The root of the table's commitment, for a [`Bytecode::committed`] program.
+    pub fn commitment(&self) -> Option<[u8; 32]> {
+        self.commitment.map(|root| root.0)
+    }
+
+    /// The Fiat-Shamir IV every proof of this program is made under.
+    pub fn fiat_shamir_iv(&self) -> [u8; 32] {
+        self.fiat_shamir_iv.0
     }
 
     pub fn len(&self) -> usize {
@@ -103,7 +136,7 @@ impl Bytecode {
     /// and each bucket to every bit its byte value sets: then bit `k` of the words holds its sum, which `x^k` scales.
     pub fn evaluate(&self, point: &[E]) -> Result<E, VerifierError> {
         require(
-            point.len() < 64 && self.len == 1 << point.len(),
+            self.commitment.is_none() && point.len() < 64 && self.len == 1 << point.len(),
             VerifierError::MultilinearSize,
         )?;
         let (low, high) = point.split_at(point.len().min(BLOCK_LOG));
@@ -134,6 +167,19 @@ impl Bytecode {
         }
         Ok(total)
     }
+}
+
+/// The key, and Fiat-Shamir IV, of a program of `2^log_instructions` instructions whose stacked table commits to
+/// `root` ([`Bytecode::committed`]): Keccak-256 of [`COMMITTED_TAG`], the log as one byte, then the root.
+///
+/// The tag differs from [`TAG`] in its first bytes, so no key is a table digest's preimage prefix and the two
+/// kinds of IV never share a transcript.
+pub fn committed_key(log_instructions: usize, root: &[u8; 32]) -> [u8; 32] {
+    let mut preimage = Vec::with_capacity(COMMITTED_TAG.len() + 1 + 32);
+    preimage.extend_from_slice(COMMITTED_TAG);
+    preimage.push(log_instructions as u8);
+    preimage.extend_from_slice(root);
+    keccak_hash(&preimage).0
 }
 
 /// `sum_k x^k * sums[k]`: each limb shifted into place, then one reduction.

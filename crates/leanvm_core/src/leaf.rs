@@ -811,6 +811,9 @@ pub(crate) struct BusProof {
     /// derived `Σ_s ξ^·totals[s]`, and the shares serve only to build each round's
     /// waiting line, which rides inside the round polynomial.
     pub sigmas: [Vec<F192>; 3],
+    /// Where the bus reads the stacked bytecode (`ζ`'s low coordinates, then the `α`s), and its value there.
+    pub bytecode_point: Vec<F192>,
+    pub bytecode_value: F192,
 }
 
 pub(crate) fn prove_balance(
@@ -820,6 +823,7 @@ pub(crate) fn prove_balance(
     cols: &[&[F64]],
     owners: &[Vec<Option<(usize, usize)>>; 3],
     tables: &[(usize, usize)],
+    bytecode_committed: bool,
     ps: &mut ProverState,
 ) -> BusProof {
     let push_lay = layout(push);
@@ -848,6 +852,23 @@ pub(crate) fn prove_balance(
     // block-for-block, count is padded), so every claim lands on ONE point ζ.
     let bus_gkr = crate::stage!("Bus GKR", || gkr::prove_product_triple(leaves, ps));
 
+    // The stacked bytecode at (ζ_lo, α⃗): the push side's public coordinates, weighted as the fingerprint
+    // weighs them. A committed program sends it, alone in a permutation (`verifier`'s `verify_bus_balance`).
+    let mut public = PublicEvals::new();
+    let (mut bytecode_point, mut bytecode_value) = (Vec::new(), F192::ZERO);
+    for (blk, owner) in push.iter().zip(&owners[0]) {
+        for (i, c) in blk.coords.iter().enumerate() {
+            if let (None, Coord::Public(vals)) = (owner, c) {
+                bytecode_point = [&bus_gkr.point[..blk.kappa], &alphas[..]].concat();
+                bytecode_value += w[i] * public_eval(vals, &bus_gkr.point[..blk.kappa], &mut public);
+            }
+        }
+    }
+    if bytecode_committed {
+        ps.add_scalar(bytecode_value);
+        ps.sample();
+    }
+
     // Framework blocks keep their per-column claims (deduped: push/pull share ζ);
     // every table block becomes a form for the zerocheck instead.
     let mut claims: Vec<ColumnClaim> = Vec::new();
@@ -866,7 +887,6 @@ pub(crate) fn prove_balance(
     // solved to satisfy, and would settle nothing.
     let mut forms = std::array::from_fn(|_| tables.iter().map(|&(_, n)| BusForm::new(n)).collect::<Vec<_>>());
     let mut frameworks = [F192::ZERO; 3];
-    let mut public = PublicEvals::new();
     crate::stage!("Bus decompose", || {
         for (s, &(blocks, lay, a, g)) in sides.iter().enumerate() {
             frameworks[s] = decompose_prove(
@@ -912,6 +932,8 @@ pub(crate) fn prove_balance(
         point: bus_gkr.point,
         forms,
         sigmas,
+        bytecode_point,
+        bytecode_value,
     }
 }
 
