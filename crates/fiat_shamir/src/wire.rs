@@ -8,7 +8,8 @@ use primitives::field::{F64, F192};
 
 /// The most phases a proof, queries a phase, leaf words and tree height may have: at least the protocol's own, and few
 /// enough that hostile bytes unprune to a bounded size. Encoding asserts them, so an honest proof always decodes.
-pub const MAX_PHASES: usize = 8;
+/// Phases: up to six levels of the execution's opening, then a committed program's bytecode opening's three.
+pub const MAX_PHASES: usize = 9;
 pub const MAX_QUERIES: usize = 256;
 pub const MAX_LEAF_WORDS: usize = 64;
 pub const MAX_HEIGHT: usize = 32;
