@@ -112,7 +112,7 @@ fn a_committed_program_proves_and_verifies() {
     let commitment = committed.bytecode_commitment().expect("committed");
     assert_eq!(
         commitment.key,
-        verifier::committed_key(commitment.log_instructions, &commitment.root)
+        verifier::committed_key(commitment.log_instructions, &commitment.root, &commitment.ood)
     );
     assert_ne!(
         leanvm_core::cpu::fs_seed(&committed),
@@ -120,7 +120,7 @@ fn a_committed_program_proves_and_verifies() {
     );
     let (proof, _) = prove(&committed, pi, leanvm_core::pcs::TEST_LOG_INV_RATE).unwrap();
     let summary = verify(&committed, &pi, &proof).expect("committed mode verifies");
-    let bytecode = verifier::Bytecode::committed(commitment.log_instructions, commitment.root).unwrap();
+    let bytecode = verifier::Bytecode::committed(commitment.log_instructions, commitment.root, commitment.ood).unwrap();
     let pi_bytes = leanvm_core::cpu::public_input_bytes(&pi);
     let replay = verifier::replay_unchecked(&bytecode, &pi_bytes, &leanvm_core::cpu::scalar_proof(&proof)).unwrap();
     assert_eq!(replay.bytecode_value, summary.bytecode_value);
@@ -147,7 +147,7 @@ fn a_committed_proof_binds_its_key_and_value() {
     let check = |bytecode: &verifier::Bytecode, proof: &Proof| {
         verifier::verify_execution(bytecode, &pi_bytes, &leanvm_core::cpu::scalar_proof(proof))
     };
-    let honest = verifier::Bytecode::committed(commitment.log_instructions, commitment.root).unwrap();
+    let honest = verifier::Bytecode::committed(commitment.log_instructions, commitment.root, commitment.ood).unwrap();
     check(&honest, &proof).expect("honest");
 
     // Wrong root: another program's commitment, and a root one bit off.
@@ -158,7 +158,7 @@ fn a_committed_proof_binds_its_key_and_value() {
     assert_ne!(other_root, commitment.root);
     assert!(
         check(
-            &verifier::Bytecode::committed(commitment.log_instructions, other_root).unwrap(),
+            &verifier::Bytecode::committed(commitment.log_instructions, other_root, commitment.ood).unwrap(),
             &proof
         )
         .is_err()
@@ -167,7 +167,7 @@ fn a_committed_proof_binds_its_key_and_value() {
     flipped[0] ^= 1;
     assert!(
         check(
-            &verifier::Bytecode::committed(commitment.log_instructions, flipped).unwrap(),
+            &verifier::Bytecode::committed(commitment.log_instructions, flipped, commitment.ood).unwrap(),
             &proof
         )
         .is_err()
@@ -179,7 +179,7 @@ fn a_committed_proof_binds_its_key_and_value() {
     // Wrong size: the same root under another instruction count is another key and another layout.
     assert!(
         check(
-            &verifier::Bytecode::committed(commitment.log_instructions + 1, commitment.root).unwrap(),
+            &verifier::Bytecode::committed(commitment.log_instructions + 1, commitment.root, commitment.ood).unwrap(),
             &proof
         )
         .is_err()
@@ -209,4 +209,32 @@ fn a_committed_proof_binds_its_key_and_value() {
     let last = tampered.merkle.len() - 1;
     tampered.merkle[last].swap(0, 1);
     assert!(check(&honest, &tampered).is_err());
+}
+
+/// A committed key fixes the table's value at its root's out-of-domain point, which the opening checks: under the
+/// honest key's IV, the same root with any other value there is rejected.
+#[test]
+fn a_committed_key_binds_its_out_of_domain_value() {
+    let (program, pi, _) = hashing_proof();
+    let committed = program.committed();
+    let commitment = committed.bytecode_commitment().unwrap();
+    let (proof, _) = prove(&committed, pi, leanvm_core::pcs::TEST_LOG_INV_RATE).unwrap();
+    let pi_bytes = leanvm_core::cpu::public_input_bytes(&pi);
+    let under_honest_iv = |ood: [u8; 32]| {
+        let bytecode = verifier::Bytecode::committed(commitment.log_instructions, commitment.root, ood)
+            .unwrap()
+            .forge_fiat_shamir_iv(commitment.key);
+        verifier::verify_execution(&bytecode, &pi_bytes, &leanvm_core::cpu::scalar_proof(&proof))
+    };
+    under_honest_iv(commitment.ood).expect("the honest value verifies");
+    for at in [0, 8, 16] {
+        let mut ood = commitment.ood;
+        ood[at] ^= 1;
+        assert!(under_honest_iv(ood).is_err(), "value byte {at}");
+    }
+    // The key itself binds it too: the true value under a key with a wrong one.
+    let mut ood = commitment.ood;
+    ood[0] ^= 1;
+    let bytecode = verifier::Bytecode::committed(commitment.log_instructions, commitment.root, ood).unwrap();
+    assert!(verifier::verify_execution(&bytecode, &pi_bytes, &leanvm_core::cpu::scalar_proof(&proof)).is_err());
 }

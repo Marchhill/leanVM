@@ -21,11 +21,11 @@ mod ring_switch;
 mod transcript;
 mod whir;
 
-pub use bytecode::{Bytecode, committed_key};
+pub use bytecode::{Bytecode, committed_key, committed_ood_encoding, committed_ood_point};
 pub use field::{E, K};
 pub use layout::{
-    COMMITTED_BYTECODE_LOG_INV_RATE, COMMITTED_TAG, MAX_COMMITTED_BYTECODE_LOG, MAX_LOG_BYTECODE, MAX_LOG_MEMORY,
-    MAX_STACKED_LOG, MAX_TABLE_LOG, MIN_LOG_MEMORY, MIN_STACKED_LOG, TAG, min_execution_stacked_log,
+    COMMITTED_BYTECODE_LOG_INV_RATE, COMMITTED_OOD_TAG, COMMITTED_TAG, MAX_COMMITTED_BYTECODE_LOG, MAX_LOG_BYTECODE,
+    MAX_LOG_MEMORY, MAX_STACKED_LOG, MAX_TABLE_LOG, MIN_LOG_MEMORY, MIN_STACKED_LOG, TAG, min_execution_stacked_log,
 };
 pub use merkle::MerklePath;
 pub use transcript::Proof;
@@ -328,18 +328,22 @@ fn walk(bytecode: &Bytecode, public_input: &[u8; 32], proof: &Proof, checked: bo
         log_inverse_rate as usize,
         &stack_claims,
     )?;
-    // 8] A committed program: open its table's commitment at the bus's point, the stack's high coordinates zero.
-    if let Some(bytecode_root) = bytecode.commitment() {
+    // 8] A committed program: open its table's commitment at the bus's point, the stack's high coordinates zero,
+    // and at the out-of-domain point its key fixes the value at.
+    if let (Some(bytecode_root), Some((ood_point, ood_value))) = (bytecode.commitment(), bytecode.ood_claim()) {
         let stack_log = committed_bytecode_stack_log(bytecode.len());
         let mut point = bus.bytecode_point.clone();
         point.resize(stack_log, ZERO);
-        let claim: StackClaim = (Box::new(move |x| eq_eval(&point, x)), bus.bytecode_value);
+        let claims: [StackClaim; 2] = [
+            (Box::new(move |x| eq_eval(&point, x)), bus.bytecode_value),
+            (Box::new(move |x| eq_eval(&ood_point, x)), ood_value),
+        ];
         verify_stacked_opening(
             &mut transcript,
             Digest(bytecode_root),
             stack_log,
             COMMITTED_BYTECODE_LOG_INV_RATE,
-            &[claim],
+            &claims,
         )?;
     }
     transcript.finish()?;

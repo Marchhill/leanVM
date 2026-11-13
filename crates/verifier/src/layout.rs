@@ -69,6 +69,9 @@ pub const TAG: &[u8] = b"leanvm-v1";
 /// Leads a committed program's key ([`crate::bytecode::committed_key`]): 15 bytes, so that with the log of its
 /// instructions it fills one 16-byte cell.
 pub const COMMITTED_TAG: &[u8; 15] = b"leanvm-commit-1";
+/// Leads the public input that, with a committed table's root as the IV, seeds the sponge its out-of-domain point is
+/// drawn from ([`crate::bytecode::committed_ood_point`]): 15 bytes, the log of the instructions the 16th.
+pub const COMMITTED_OOD_TAG: &[u8; 15] = b"leanvm-ood-pt-1";
 /// A committed program's table is committed as a stack of `2^max(MIN_STACKED_LOG, log2 len)` words, zero past the
 /// table, at this inverse rate, the PCS's highest: the opening that discharges a proof's claim on it then takes the
 /// fewest queries. A protocol constant, so the key binds it.

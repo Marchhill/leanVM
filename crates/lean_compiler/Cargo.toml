@@ -13,4 +13,4 @@ leanvm_core.workspace = true
 
 [dev-dependencies]
 rand.workspace = true
-verifier.workspace = true
+verifier = { workspace = true, features = ["forge"] }

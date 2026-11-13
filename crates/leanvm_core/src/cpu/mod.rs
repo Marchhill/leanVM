@@ -673,9 +673,8 @@ pub fn verify(program: &Program, public_input: &[F192; 2], proof: &Proof) -> Res
         return Err(CpuError::PublicInput);
     }
     let bytecode = match &program.bytecode_commitment {
-        Some(commitment) => {
-            verifier::Bytecode::committed(commitment.log_instructions, commitment.root).map_err(CpuError::Verifier)?
-        }
+        Some(commitment) => verifier::Bytecode::committed(commitment.log_instructions, commitment.root, commitment.ood)
+            .map_err(CpuError::Verifier)?,
         None => {
             let table: Vec<u64> = layout::bytecode_table(&program.prog)
                 .iter()

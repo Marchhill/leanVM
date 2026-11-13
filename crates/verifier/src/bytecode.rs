@@ -2,8 +2,9 @@
 
 use crate::field::{E, ZERO, reduce};
 use crate::hash::{Digest, keccak_hash};
-use crate::layout::{BUS_BITS, COMMITTED_TAG, TAG};
+use crate::layout::{BUS_BITS, COMMITTED_OOD_TAG, COMMITTED_TAG, TAG};
 use crate::multilinear::eq_kernel;
+use crate::transcript::Sponge;
 use crate::{VerifierError, require};
 
 /// The stacked bytecode multilinear, prepared to be evaluated, and the Fiat-Shamir IV it gives every transcript.
@@ -20,8 +21,16 @@ pub struct Bytecode {
     positions: Vec<u16>,
     /// A byte some word of a block has: which of the word's eight, times 256, plus its value.
     bytes: Vec<u16>,
-    /// The root of the table's commitment ([`Bytecode::committed`]), when the verifier holds that instead of the table.
-    commitment: Option<Digest>,
+    /// The table's commitment ([`Bytecode::committed`]), when the verifier holds that instead of the table.
+    commitment: Option<Commitment>,
+}
+
+/// A committed table's root, and the out-of-domain evaluation its key fixes.
+#[derive(Clone, Debug)]
+struct Commitment {
+    root: Digest,
+    ood_point: Vec<E>,
+    ood_value: E,
 }
 
 /// A block with a nonzero word: its index, and where its words and bytes end.
@@ -91,23 +100,29 @@ impl Bytecode {
         }
     }
 
-    /// A program the verifier knows only by `2^log_instructions` and the root of its stacked table's commitment.
+    /// A program the verifier knows only by `2^log_instructions`, the root of its stacked table's commitment, and
+    /// the table's value `ood` ([`committed_ood_encoding`]) at the root's out-of-domain point.
     ///
-    /// The Fiat-Shamir IV is [`committed_key`]`(log_instructions, root)`. A proof of such a program sends the table's
-    /// value at the bus's point and opens the commitment there, so verifying it never touches the table.
-    pub fn committed(log_instructions: usize, root: [u8; 32]) -> Result<Self, VerifierError> {
+    /// The Fiat-Shamir IV is [`committed_key`]`(log_instructions, root, ood)`. A proof of such a program sends the
+    /// table's value at the bus's point and opens the commitment there and at the out-of-domain point, so verifying
+    /// it never touches the table.
+    pub fn committed(log_instructions: usize, root: [u8; 32], ood: [u8; 32]) -> Result<Self, VerifierError> {
         require(
             log_instructions + BUS_BITS <= crate::layout::MAX_COMMITTED_BYTECODE_LOG,
             VerifierError::MultilinearSize,
         )?;
         Ok(Self {
             len: 1 << (log_instructions + BUS_BITS),
-            fiat_shamir_iv: Digest(committed_key(log_instructions, &root)),
+            fiat_shamir_iv: Digest(committed_key(log_instructions, &root, &ood)),
             blocks: Vec::new(),
             words: Vec::new(),
             positions: Vec::new(),
             bytes: Vec::new(),
-            commitment: Some(Digest(root)),
+            commitment: Some(Commitment {
+                root: Digest(root),
+                ood_point: committed_ood_point(log_instructions, &root),
+                ood_value: committed_ood_value(&ood),
+            }),
         })
     }
 
@@ -121,7 +136,12 @@ impl Bytecode {
 
     /// The root of the table's commitment, for a [`Bytecode::committed`] program.
     pub fn commitment(&self) -> Option<[u8; 32]> {
-        self.commitment.map(|root| root.0)
+        self.commitment.as_ref().map(|c| c.root.0)
+    }
+
+    /// The out-of-domain point and value a [`Bytecode::committed`] program's key fixes.
+    pub(crate) fn ood_claim(&self) -> Option<(Vec<E>, E)> {
+        self.commitment.as_ref().map(|c| (c.ood_point.clone(), c.ood_value))
     }
 
     /// The Fiat-Shamir IV every proof of this program is made under.
@@ -178,16 +198,55 @@ impl Bytecode {
 }
 
 /// The key, and Fiat-Shamir IV, of a program of `2^log_instructions` instructions whose stacked table commits to
-/// `root` ([`Bytecode::committed`]): Keccak-256 of [`COMMITTED_TAG`], the log as one byte, then the root.
+/// `root` and takes the value `ood` encodes at [`committed_ood_point`] ([`Bytecode::committed`]): Keccak-256 of
+/// [`COMMITTED_TAG`], the log as one byte, the root, then `ood`.
 ///
 /// The tag differs from [`TAG`] in its first bytes, so no key is a table digest's preimage prefix and the two
 /// kinds of IV never share a transcript.
-pub fn committed_key(log_instructions: usize, root: &[u8; 32]) -> [u8; 32] {
-    let mut preimage = Vec::with_capacity(COMMITTED_TAG.len() + 1 + 32);
+pub fn committed_key(log_instructions: usize, root: &[u8; 32], ood: &[u8; 32]) -> [u8; 32] {
+    let mut preimage = Vec::with_capacity(COMMITTED_TAG.len() + 1 + 64);
     preimage.extend_from_slice(COMMITTED_TAG);
     preimage.push(log_instructions as u8);
     preimage.extend_from_slice(root);
+    preimage.extend_from_slice(ood);
     keccak_hash(&preimage).0
+}
+
+/// The out-of-domain point of a committed table: one coordinate per stack variable, each a challenge of the sponge
+/// seeded with `root` as the IV and [`COMMITTED_OOD_TAG`] then the log of the instructions as the public input.
+///
+/// WHIR's first level opens the root in the list-decoding regime, and a root the verifier does not derive itself may
+/// sit near several codewords. Fixing the table's value at this point in the key leaves one of them: two distinct
+/// stacks of `μ` variables agree there with probability at most `μ/|E|`, so over the Johnson list of `L` codewords at
+/// most `L²·μ/(2|E|)` (one sample: `188 - (2 log L - 1)` bits, with `log L ≈ 9.3` at this rate and size).
+pub fn committed_ood_point(log_instructions: usize, root: &[u8; 32]) -> Vec<E> {
+    let mut public_input = [0u8; 32];
+    public_input[..15].copy_from_slice(COMMITTED_OOD_TAG);
+    public_input[15] = log_instructions as u8;
+    let mut sponge = Sponge::new(Digest(*root), Digest(public_input));
+    let stack_log = crate::committed_bytecode_stack_log(1 << (log_instructions + BUS_BITS));
+    (0..stack_log).map(|_| sponge.sample()).collect()
+}
+
+/// A value as the two 16-byte cells a committed key carries it in: `c0 ‖ c1`, then `c2` and eight zero bytes.
+pub fn committed_ood_encoding(value: E) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    for (chunk, limb) in out
+        .as_chunks_mut::<8>()
+        .0
+        .iter_mut()
+        .zip([value.c0, value.c1, value.c2])
+    {
+        *chunk = limb.to_le_bytes();
+    }
+    out
+}
+
+/// The value two cells `a ‖ b` encode, `a + y²·b`: any such pair is admitted, as the guest admits it.
+fn committed_ood_value(ood: &[u8; 32]) -> E {
+    let limb = |i: usize| u64::from_le_bytes(ood.as_chunks::<8>().0[i]);
+    let (a, b) = (E::new(limb(0), limb(1), 0), E::new(limb(2), limb(3), 0));
+    a + E::new(0, 0, 1) * b
 }
 
 /// `sum_k x^k * sums[k]`: each limb shifted into place, then one reduction.

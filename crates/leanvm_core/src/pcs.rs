@@ -149,10 +149,15 @@ pub struct BytecodeCommitment {
     /// The program's instructions, as a log.
     pub log_instructions: usize,
     pub root: [u8; 32],
-    /// The program's key and Fiat-Shamir IV, `verifier::committed_key(log_instructions, root)`.
+    /// The table's value at the root's out-of-domain point (`verifier::committed_ood_point`), encoded
+    /// (`verifier::committed_ood_encoding`).
+    pub ood: [u8; 32],
+    /// The program's key and Fiat-Shamir IV, `verifier::committed_key(log_instructions, root, ood)`.
     pub key: [u8; 32],
+    ood_point: Vec<primitives::field::F192>,
+    ood_value: primitives::field::F192,
     stack_log: usize,
-    /// The table, padded to whole committed lanes.
+    /// The table, zero-padded to the whole stack, which the out-of-domain claim spans.
     stack: Vec<F64>,
 }
 
@@ -160,21 +165,33 @@ impl BytecodeCommitment {
     /// Commit `table`, the stacked bytecode of a `2^log_instructions`-instruction program.
     pub fn new(table: &[F64], log_instructions: usize) -> Self {
         let stack_log = verifier::committed_bytecode_stack_log(table.len());
-        let lane = 1usize << (stack_log - LOG_BATCH);
         let mut stack = table.to_vec();
-        stack.resize(table.len().next_multiple_of(lane), F64::ZERO);
+        stack.resize(1 << stack_log, F64::ZERO);
         let (commitment, _) = whir_commit(&stack, stack_log, LOG_BATCH, verifier::COMMITTED_BYTECODE_LOG_INV_RATE);
+        let ood_point = verifier::committed_ood_point(log_instructions, &commitment.root);
+        // The stack is the table, zero above its low variables.
+        let table_log = crate::log2_strict_usize(table.len());
+        let words: Vec<u64> = table.iter().map(|word| word.0).collect();
+        let ood_value = verifier::Bytecode::new(&words)
+            .evaluate(&ood_point[..table_log])
+            .expect("a table of a power-of-two length");
+        let one = verifier::E::new(1, 0, 0);
+        let ood_value = ood_point[table_log..].iter().fold(ood_value, |v, &p| v * (one + p));
+        let ood = verifier::committed_ood_encoding(ood_value);
         Self {
             log_instructions,
             root: commitment.root,
-            key: verifier::committed_key(log_instructions, &commitment.root),
+            ood,
+            key: verifier::committed_key(log_instructions, &commitment.root, &ood),
+            ood_point: ood_point.into_iter().map(crate::cpu::from_scalar).collect(),
+            ood_value: crate::cpu::from_scalar(ood_value),
             stack_log,
             stack,
         }
     }
 
-    /// Open the commitment at `point` (`value` the table's multilinear there), re-encoding the table: an opening
-    /// consumes the codeword, and this one is small.
+    /// Open the commitment at `point` (`value` the table's multilinear there) and at the out-of-domain point,
+    /// re-encoding the table: an opening consumes the codeword, and this one is small.
     pub(crate) fn open(
         &self,
         ps: &mut ProverState,
@@ -183,20 +200,20 @@ impl BytecodeCommitment {
     ) {
         let rate = verifier::COMMITTED_BYTECODE_LOG_INV_RATE;
         let (_, prover_data) = whir_commit(&self.stack, self.stack_log, LOG_BATCH, rate);
-        let claim = SlotClaim::Point {
-            offset: 0,
-            low_point: point,
-            value,
-        };
+        let claims = [
+            SlotClaim::Point {
+                offset: 0,
+                low_point: point,
+                value,
+            },
+            SlotClaim::Point {
+                offset: 0,
+                low_point: self.ood_point.clone(),
+                value: self.ood_value,
+            },
+        ];
         let cfg = whir_config(self.stack_log, rate);
-        ::pcs::stack_open::open_points_whir_stacked(
-            ps,
-            self.stack_log,
-            self.stack.clone(),
-            prover_data,
-            &cfg,
-            &[claim],
-        );
+        ::pcs::stack_open::open_points_whir_stacked(ps, self.stack_log, self.stack.clone(), prover_data, &cfg, &claims);
     }
 }
 
