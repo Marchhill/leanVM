@@ -1,0 +1,31 @@
+[package]
+name = "batch_leaf"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[features]
+mixed = ["rec_aggregation/eip8288-mixed"]
+
+[[bin]]
+name = "agg_bench"
+required-features = ["mixed"]
+
+[lints]
+workspace = true
+
+[dependencies]
+primitives.workspace = true
+lean_vm.workspace = true
+lean_compiler.workspace = true
+rec_aggregation.workspace = true
+xmss.workspace = true
+sphincs.workspace = true
+bincode.workspace = true
+serde.workspace = true
+rand.workspace = true
+fips204 = { version = "0.4", default-features = false, features = ["default-rng", "ml-dsa-44"] }
+sha3 = "0.10"
+tide-fn-dsa = "0.4"
+sha2 = { version = "0.10", features = ["compress"] }
+fips205 = { version = "0.4", default-features = false, features = ["default-rng", "slh_dsa_shake_128s"] }

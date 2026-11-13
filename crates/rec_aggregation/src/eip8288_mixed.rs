@@ -12,11 +12,26 @@ pub const MAX_CLAIMS_PER_BATCH_LEAF: usize = 16;
 pub const MAX_INNER_PROOFS_PER_STEP: usize = 16;
 /// Raw SPHINCS signatures one guest execution verifies, in a node without leaves or recursive proofs.
 pub const MAX_RAW_SIGNATURES: usize = 4;
-pub const MAX_GENERIC_BYTECODE_LOG: usize = 11;
-pub const MAX_GENERIC_COMMITTED_LOG: usize = 22;
-pub const MAX_GENERIC_BUS_LOG: usize = 22;
-pub const MAX_MIXED_COMMITTED_LOG: usize = 27;
-pub const MAX_MIXED_BUS_LOG: usize = 26;
+pub const MAX_GENERIC_BYTECODE_LOG: usize = env_or(option_env!("EIP8288_GENERIC_CODE_LOG"), 11);
+pub const MAX_GENERIC_COMMITTED_LOG: usize = env_or(option_env!("EIP8288_GENERIC_COMMITTED_LOG"), 22);
+pub const MAX_GENERIC_BUS_LOG: usize = env_or(option_env!("EIP8288_GENERIC_COMMITTED_LOG"), 22);
+
+/// A build-time override of a profile constant, for benchmark variants of the guest.
+const fn env_or(value: Option<&str>, default: usize) -> usize {
+    let Some(text) = value else { return default };
+    let (bytes, mut i, mut n) = (text.as_bytes(), 0, 0);
+    while i < bytes.len() {
+        n = 10 * n + (bytes[i] - b'0') as usize;
+        i += 1;
+    }
+    n
+}
+pub const MAX_MIXED_COMMITTED_LOG: usize = env_or(option_env!("EIP8288_MIXED_COMMITTED_LOG"), 27);
+pub const MAX_MIXED_BUS_LOG: usize = env_or(option_env!("EIP8288_MIXED_BUS_LOG"), 26);
+
+/// Benchmark hook: `[cycles, base_cycles, committed, log_mem, guest_bytecode]` of the last guest node proved.
+#[doc(hidden)]
+pub static LAST_NODE_STATS: std::sync::Mutex<[usize; 5]> = std::sync::Mutex::new([0; 5]);
 pub const LOG_INV_RATE: usize = 1;
 
 /// An EIP-8288 batch leaf: a generic CPU proof whose public input is `batch_hash(claims)`.
@@ -2129,7 +2144,14 @@ pub fn aggregate_mixed(
     rate: usize,
 ) -> Result<MixedProof, MixedError> {
     let (guest, deferred, pi) = prepare_mixed(children, raw_sph, raw_generic, selected, rate)?;
-    let (proof, _) = prove(&guest, pi, rate).map_err(MixedError::Prover)?;
+    let (proof, stats) = prove(&guest, pi, rate).map_err(MixedError::Prover)?;
+    *LAST_NODE_STATS.lock().unwrap() = [
+        stats.cycles,
+        stats.base_counts.iter().sum(),
+        stats.committed,
+        stats.log_mem,
+        guest.prog.len(),
+    ];
     if !recursion_supported(unified_guest(), &proof) {
         return Err(MixedError::Capacity);
     }
