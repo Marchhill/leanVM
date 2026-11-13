@@ -166,6 +166,14 @@ impl Program {
         self
     }
 
+    /// A malicious prover's switch: prove under `iv` rather than the program's own IV.
+    #[cfg(feature = "forge")]
+    #[doc(hidden)]
+    pub fn forge_fiat_shamir_iv(mut self, iv: [u8; 32]) -> Self {
+        self.fiat_shamir_iv = iv;
+        self
+    }
+
     /// The table's commitment, for a [`Program::committed`] program.
     pub fn bytecode_commitment(&self) -> Option<&pcs::BytecodeCommitment> {
         self.bytecode_commitment.as_deref()

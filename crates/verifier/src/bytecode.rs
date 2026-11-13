@@ -111,6 +111,14 @@ impl Bytecode {
         })
     }
 
+    /// A malicious prover's switch: walk a transcript under `iv` rather than the program's own IV.
+    #[cfg(feature = "forge")]
+    #[doc(hidden)]
+    pub fn forge_fiat_shamir_iv(mut self, iv: [u8; 32]) -> Self {
+        self.fiat_shamir_iv = Digest(iv);
+        self
+    }
+
     /// The root of the table's commitment, for a [`Bytecode::committed`] program.
     pub fn commitment(&self) -> Option<[u8; 32]> {
         self.commitment.map(|root| root.0)

@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 publish = false
 
+[features]
+# A malicious prover's switches, for rejection tests only.
+forge = ["verifier/forge"]
+
 [lints]
 workspace = true
 
