@@ -128,31 +128,60 @@ pub fn sphincs_verification_key(pk: &SphincsPublicKey) -> [u8; 32] {
 mod tests {
     use super::*;
 
+    /// EIP-8288: the key hash binds leanVM's program commitment, not a hash of the serialized code.
     #[test]
-    fn generic_verification_key_uses_the_eip8288_domain_and_exact_canonical_key() {
+    fn generic_verification_key_binds_the_program_commitment() {
         use lean_vm::cpu::Op;
-        let program = Program::assemble(
-            vec![Op::Set { o: 1, k: integer(7) }],
-            std::collections::HashMap::new(),
-            0,
+        let set = |k: u64| {
+            Program::assemble(
+                vec![Op::Set {
+                    o: 1,
+                    k: integer(k as usize),
+                }],
+                std::collections::HashMap::new(),
+                0,
+            )
+        };
+        let program = set(7);
+        let commitment = program_digest(&program);
+        let key = generic_verification_key(&program).unwrap();
+        assert_eq!(
+            key,
+            primitives::keccak::keccak256(&[b"ethereum/8288/leanSTARK/vk/v2\0".as_slice(), &commitment].concat())
         );
-        let mut canonical_key = vec![0u8; 49];
-        canonical_key[..4].copy_from_slice(&1u32.to_le_bytes());
-        canonical_key[4] = 2;
-        canonical_key[5..9].copy_from_slice(&1u32.to_le_bytes());
-        canonical_key[21..29].copy_from_slice(&7u64.to_le_bytes());
-        let expected =
-            primitives::keccak::keccak256(&[b"ethereum/8288/leanSTARK/vk/v1\0".as_slice(), &canonical_key].concat());
-        assert_eq!(generic_verification_key(&program).unwrap(), expected);
+        // The seed absorbs the same commitment, so a proof cannot verify under another program's key.
+        assert_eq!(lean_vm::cpu::fs_seed(&program), lean_vm::cpu::fs_seed(&set(7)));
+        assert_ne!(lean_vm::cpu::fs_seed(&program), lean_vm::cpu::fs_seed(&set(8)));
+        assert_ne!(key, generic_verification_key(&set(8)).unwrap());
+        let code = encode_program(&program).unwrap();
         assert_ne!(
-            expected,
-            primitives::keccak::keccak256(&[b"eip8288/leanstark-vk/leanvm-cpu\0".as_slice(), &canonical_key].concat())
+            key,
+            primitives::keccak::keccak256(
+                &[
+                    b"ethereum/8288/leanSTARK/vk/v1\0".as_slice(),
+                    &1u32.to_le_bytes(),
+                    &code
+                ]
+                .concat()
+            )
         );
-        canonical_key[21] ^= 1;
-        assert_ne!(
-            expected,
-            primitives::keccak::keccak256(&[GENERIC_VK_DOMAIN.as_slice(), &canonical_key].concat())
-        );
+    }
+
+    /// Program size counts the compiled, padded program; the bound is checked before any narrowing.
+    #[test]
+    fn generic_program_size_bound_is_inclusive() {
+        use lean_vm::cpu::Op;
+        let sized = |n: usize| {
+            Program::assemble(
+                vec![Op::Xor { a: 0, b: 0, c: 0 }; n],
+                std::collections::HashMap::new(),
+                0,
+            )
+        };
+        let max = 1 << MAX_GENERIC_BYTECODE_LOG;
+        assert!(generic_verification_key(&sized(max)).is_ok());
+        assert_eq!(encode_program(&sized(max)).unwrap().len(), 45 * max);
+        assert!(generic_verification_key(&sized(2 * max)).is_err());
     }
 
     /// A verifier program under its own key that accepts any statement; `variant` changes the key.
@@ -381,7 +410,7 @@ mod tests {
             claims: &[data],
         };
         for name in [
-            "code_header",
+            "program_log",
             "code_instruction",
             "cell_bytes",
             "cell_index",
@@ -1770,23 +1799,29 @@ pub fn generic_recursion_supported(program: &Program, proof: &lean_vm::cpu::Proo
 }
 
 /// Domain tag opening the generic verification-key hash preimage.
-pub const GENERIC_VK_DOMAIN: [u8; 30] = *b"ethereum/8288/leanSTARK/vk/v1\0";
+pub const GENERIC_VK_DOMAIN: [u8; 30] = *b"ethereum/8288/leanSTARK/vk/v2\0";
 
 /// EIP-8288 leanSTARK `verification_key_hash` of a generic program: Keccak-256 of
-/// `GENERIC_VK_DOMAIN` and the canonical code encoding.
+/// `GENERIC_VK_DOMAIN` and the program commitment, the bytecode-table digest leanVM's
+/// Fiat-Shamir seed absorbs.
+///
+/// The profile fixes every other verification parameter, so the commitment is the whole key.
+/// Program size counts the compiled, padded program, support code included.
 pub fn generic_verification_key(program: &Program) -> Result<[u8; 32], MixedError> {
-    Ok(primitives::keccak::keccak256(&encode_program(program)?))
+    encode_program(program)?;
+    Ok(primitives::keccak::keccak256(
+        &[GENERIC_VK_DOMAIN.as_slice(), &program_digest(program)].concat(),
+    ))
 }
 
+/// The guest's 45-byte instruction records, rejecting programs outside the profile.
 fn encode_program(program: &Program) -> Result<Vec<u8>, MixedError> {
     use lean_vm::cpu::{DerefMode, Op};
     let n = program.prog.len();
     if !n.is_power_of_two() || n > 1 << MAX_GENERIC_BYTECODE_LOG {
         return Err(MixedError::Program);
     }
-    let mut bytes = Vec::with_capacity(GENERIC_VK_DOMAIN.len() + 4 + 45 * n);
-    bytes.extend_from_slice(&GENERIC_VK_DOMAIN);
-    bytes.extend_from_slice(&(n as u32).to_le_bytes());
+    let mut bytes = Vec::with_capacity(45 * n);
     for op in &program.prog {
         let (tag, args, limbs, md) = match *op {
             Op::Xor { a, b, c } => (0, [a, b, c, 0], [0; 3], 0),
@@ -2201,19 +2236,14 @@ fn prepare_mixed_with_hints(
             vec![integer(input.program.prog.len().trailing_zeros() as usize)],
         );
         let code = encode_program(input.program)?;
-        let code_start = GENERIC_VK_DOMAIN.len() + 4;
-        hints.push(
-            "code_header",
-            code[GENERIC_VK_DOMAIN.len()..code_start]
-                .iter()
-                .map(|&x| integer(x as usize))
-                .collect(),
-        );
-        for instruction in code[code_start..].as_chunks::<45>().0 {
+        for instruction in code.as_chunks::<45>().0 {
             hints.push(
                 "code_instruction",
                 instruction.iter().map(|&x| integer(x as usize)).collect(),
             );
+            for &byte in instruction.iter().filter(|&&byte| byte != 0) {
+                hints.push("byte_index", vec![gcount(byte as usize)]);
+            }
             let offsets: &[usize] = match instruction[0] {
                 0 | 1 | 3 | 4 => &[1, 5, 9],
                 2 => &[1],
@@ -2227,9 +2257,10 @@ fn prepare_mixed_with_hints(
                 }
             }
         }
-        push_hash_split(&mut hints, &code);
         push_block_counters(&mut hints, 2 * input.program.prog.len());
-        push_cell_bytes(&mut hints, &program_digest(input.program));
+        let commitment = program_digest(input.program);
+        push_cell_bytes(&mut hints, &commitment);
+        push_hash_split(&mut hints, &[GENERIC_VK_DOMAIN.as_slice(), &commitment].concat());
         hints.push("generic_data", pi.to_vec());
         let (sub_hints, mut sub) =
             gen_verify_with_min(input.program, pi, summary, lean_vm::pcs::MIN_MU).map_err(MixedError::Witness)?;
@@ -2297,9 +2328,7 @@ fn program_seed_source() -> String {
         prefix.extend_from_slice(&(digest.len() as u64).to_le_bytes());
         prefix.extend_from_slice(&digest);
     }
-    let mut source = String::from(
-        "\ndef mixed_program_seed(table_digest):\n    byte_table = HeapBuf(256)\n    for i in unroll(0, 256):\n        byte_table[GEN ** i] = i\n    data = HeapBuf(32)\n    mixed_cell_bytes(table_digest[1], data, byte_table)\n    mixed_cell_bytes(table_digest[GEN], data * GEN ** 16, byte_table)\n",
-    );
+    let mut source = String::from("\ndef mixed_program_seed(data):\n");
     let mut bytes: Vec<String> = prefix.iter().map(u8::to_string).collect();
     bytes.extend((0..32).map(|i| format!("data[GEN ** {i}]")));
     let length = bytes.len();

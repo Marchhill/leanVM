@@ -204,28 +204,25 @@ def mixed_generic(logs, squares, fresh):
     code_log_g = g_power_of_word(program_log, squares, 4)
     assert log(code_log_g) < MAX_GENERIC_CODE_LOG + 1
     size_g = squares[code_log_g]
-    # EIP-8288 fixes the domain, including its terminal zero, before the canonical key.
-    length_g = GEN ** 34 * size_g ** 45
-    raw = HeapBuf(length_g * GEN ** 136)
-    for i in unroll(0, 30):
-        raw[GEN ** i] = GENERIC_VK_DOMAIN[i]
-    hint_witness(raw[30:34], "code_header")
-    assert g_power_of_word(word(raw, 30, 4), squares, 15) == size_g
-    for row in mul_range(1, size_g):
-        instruction = raw * GEN ** 34 * row ** 45
-        hint_witness(instruction[0:45], "code_instruction")
-    vk = mixed_keccak(raw, length_g, squares)
     powers = HeapBuf(768)
     for i in unroll(0, 256):
         powers[GEN ** i] = i
         powers[GEN ** (256 + i)] = GEN ** i
         powers[GEN ** (512 + i)] = GEN ** (256 * i)
+    raw = HeapBuf(size_g ** 45)
+    for row in mul_range(1, size_g):
+        instruction = raw * row ** 45
+        hint_witness(instruction[0:45], "code_instruction")
+        for j in unroll(0, 45):
+            b = instruction[GEN ** j]
+            if b != 0:
+                checked_byte(b, powers)
     table = HeapBuf(size_g ** 16)
     for slot in unroll(0, 3):
         for row in mul_range(1, size_g):
             table[size_g ** slot * row] = 0
     for row in mul_range(1, size_g):
-        instruction = raw * GEN ** 34 * row ** 45
+        instruction = raw * row ** 45
         opcode = g_power_of_word(instruction[1], squares, 3)
         # A match does not bound its scrutinee, so the opcode is range-checked to the arm count first.
         assert log(opcode) < 7
@@ -253,7 +250,14 @@ def mixed_generic(logs, squares, fresh):
             packed[i] = pack64x2(input[GEN ** (2 * i)], input[GEN ** (2 * i + 1)])
         blake2s(packed[0:2], packed[2:4], output[0:2], cv=[state[1], state[GEN]], md=md[0])
     table_digest = hashes * size_g ** 4
-    seed0, seed1 = mixed_program_seed(table_digest)
+    # EIP-8288: the key hash binds leanVM's program commitment, the table digest the seed also absorbs.
+    key = HeapBuf(GEN ** 62 * GEN ** 136)
+    for i in unroll(0, 30):
+        key[GEN ** i] = GENERIC_VK_DOMAIN[i]
+    mixed_cell_bytes(table_digest[1], key * GEN ** 30, powers)
+    mixed_cell_bytes(table_digest[GEN], key * GEN ** 46, powers)
+    vk = mixed_keccak(key, GEN ** 62, squares)
+    seed0, seed1 = mixed_program_seed(key * GEN ** 30)
     data = StackBuf(2)
     hint_witness(data, "generic_data")
     canonical0 = assert_canonical(data[0])
