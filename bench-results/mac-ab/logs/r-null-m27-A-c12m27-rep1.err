@@ -1,0 +1,22 @@
+
+thread 'main' (237002697) panicked at crates/batch_leaf/src/bin/agg_bench.rs:69:68:
+node proves: Capacity
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+        4.76 real        32.84 user         4.38 sys
+         12509544448  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              845975  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+              142231  involuntary context switches
+        430594307213  instructions retired
+        113391545271  cycles elapsed
+         11525580544  peak memory footprint

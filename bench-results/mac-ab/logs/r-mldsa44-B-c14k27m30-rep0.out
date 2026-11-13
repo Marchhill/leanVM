@@ -1,0 +1,1 @@
+{"kind":"r","scheme":"mldsa44","n":1,"run":0,"prove_s":102.8636,"verify_ms":57.616,"proof_bytes":361360,"deps":1,"max_claims":16,"code_log":14,"committed_log":27,"mixed_committed_log":30,"node_cycles":29433856,"node_base_cycles":21572053,"node_committed":568328192,"node_log_mem":25,"guest_bytecode":524288,"peak_rss_gib":18.61,"leaf_s":2.227}

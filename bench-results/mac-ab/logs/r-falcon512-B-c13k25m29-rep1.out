@@ -1,0 +1,1 @@
+{"kind":"r","scheme":"falcon512","n":1,"run":0,"prove_s":13.4503,"verify_ms":22.714,"proof_bytes":343904,"deps":1,"max_claims":16,"code_log":13,"committed_log":25,"mixed_committed_log":29,"node_cycles":14716928,"node_base_cycles":11080228,"node_committed":284426240,"node_log_mem":24,"guest_bytecode":524288,"peak_rss_gib":19.12,"leaf_s":0.696}

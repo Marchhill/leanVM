@@ -1,0 +1,1 @@
+{"kind":"merge","scheme":"null","n":1,"run":0,"prove_s":1.0681,"verify_ms":10.864,"proof_bytes":291176,"deps":2,"max_claims":16,"code_log":12,"committed_log":22,"mixed_committed_log":29,"node_cycles":1277960,"node_base_cycles":919101,"node_committed":35627328,"node_log_mem":21,"guest_bytecode":524288,"peak_rss_gib":12.04}

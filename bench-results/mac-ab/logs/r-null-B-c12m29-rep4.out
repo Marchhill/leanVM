@@ -1,0 +1,1 @@
+{"kind":"r","scheme":"null","n":1,"run":0,"prove_s":3.7487,"verify_ms":15.989,"proof_bytes":330520,"deps":1,"max_claims":16,"code_log":12,"committed_log":22,"mixed_committed_log":29,"node_cycles":7358464,"node_base_cycles":5629771,"node_committed":142475264,"node_log_mem":23,"guest_bytecode":524288,"peak_rss_gib":11.83,"leaf_s":0.035}

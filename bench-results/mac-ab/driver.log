@@ -1,0 +1,104 @@
+start 2026-11-13T08:09:31Z
+r-null A c12m29 rep0 rc=0 wall=8s rss=12332MiB "prove_s":3.9810 
+r-null B c12m29 rep0 rc=0 wall=9s rss=12199MiB "prove_s":3.8874 
+r-null C c12m29 rep0 rc=0 wall=7s rss=9921MiB "prove_s":3.1139 
+r-null A c12m29 rep1 rc=0 wall=9s rss=12244MiB "prove_s":3.7016 
+r-null B c12m29 rep1 rc=0 wall=8s rss=12076MiB "prove_s":3.7002 
+r-null C c12m29 rep1 rc=0 wall=7s rss=9934MiB "prove_s":3.1192 
+r-null A c12m29 rep2 rc=0 wall=9s rss=12180MiB "prove_s":3.7524 
+r-null B c12m29 rep2 rc=0 wall=8s rss=12246MiB "prove_s":3.7687 
+r-null C c12m29 rep2 rc=0 wall=8s rss=9858MiB "prove_s":3.0527 
+r-null A c12m29 rep3 rc=0 wall=8s rss=12219MiB "prove_s":3.7651 
+r-null B c12m29 rep3 rc=0 wall=8s rss=12268MiB "prove_s":3.7494 
+r-null C c12m29 rep3 rc=0 wall=8s rss=10007MiB "prove_s":3.0439 
+r-null A c12m29 rep4 rc=0 wall=8s rss=12270MiB "prove_s":3.7470 
+r-null B c12m29 rep4 rc=0 wall=9s rss=12115MiB "prove_s":3.7487 
+r-null C c12m29 rep4 rc=0 wall=7s rss=9984MiB "prove_s":3.0696 
+r-null A c12m29 rep5 rc=0 wall=8s rss=12215MiB "prove_s":3.7961 
+r-null B c12m29 rep5 rc=0 wall=8s rss=12132MiB "prove_s":3.7083 
+r-null C c12m29 rep5 rc=0 wall=8s rss=9896MiB "prove_s":3.1135 
+r-falcon512 A c13k25m29 rep0 rc=0 wall=37s rss=13873MiB "prove_s":19.4208 
+r-falcon512 B c13k25m29 rep0 rc=0 wall=30s rss=18599MiB "prove_s":15.0037 
+r-falcon512 C c13k25m29 rep0 rc=0 wall=21s rss=18289MiB "prove_s":8.6224 
+r-falcon512 A c13k25m29 rep1 rc=0 wall=28s rss=19180MiB "prove_s":14.5218 
+r-falcon512 B c13k25m29 rep1 rc=0 wall=27s rss=19574MiB "prove_s":13.4503 
+r-falcon512 C c13k25m29 rep1 rc=0 wall=14s rss=19133MiB "prove_s":6.2936 
+r-falcon512 A c13k25m29 rep2 rc=0 wall=30s rss=19139MiB "prove_s":16.1988 
+r-falcon512 B c13k25m29 rep2 rc=0 wall=28s rss=18714MiB "prove_s":14.5402 
+r-falcon512 C c13k25m29 rep2 rc=0 wall=16s rss=18802MiB "prove_s":7.6887 
+r-falcon512 A c13k25m29 rep3 rc=0 wall=32s rss=16508MiB "prove_s":15.9372 
+r-falcon512 B c13k25m29 rep3 rc=0 wall=28s rss=18625MiB "prove_s":14.2915 
+r-falcon512 C c13k25m29 rep3 rc=0 wall=15s rss=19137MiB "prove_s":6.4878 
+r-falcon512 A c13k25m29 rep4 rc=0 wall=31s rss=18799MiB "prove_s":17.1249 
+r-falcon512 B c13k25m29 rep4 rc=0 wall=29s rss=18527MiB "prove_s":15.1836 
+r-falcon512 C c13k25m29 rep4 rc=0 wall=15s rss=18547MiB "prove_s":7.3159 
+r-falcon512 A c13k25m29 rep5 rc=0 wall=34s rss=17667MiB "prove_s":18.2025 
+r-falcon512 B c13k25m29 rep5 rc=0 wall=28s rss=19119MiB "prove_s":14.1103 
+r-falcon512 C c13k25m29 rep5 rc=0 wall=16s rss=18827MiB "prove_s":7.3167 
+merge-null A c12m29 rep0 rc=0 wall=10s rss=12290MiB "prove_s":1.0840 
+merge-null B c12m29 rep0 rc=0 wall=10s rss=12230MiB "prove_s":1.0960 
+merge-null C c12m29 rep0 rc=0 wall=8s rss=9988MiB "prove_s":1.1015 
+merge-null A c12m29 rep1 rc=0 wall=10s rss=12326MiB "prove_s":1.0681 
+merge-null B c12m29 rep1 rc=0 wall=10s rss=12222MiB "prove_s":1.0872 
+merge-null C c12m29 rep1 rc=0 wall=8s rss=9879MiB "prove_s":1.0785 
+merge-null A c12m29 rep2 rc=0 wall=10s rss=12173MiB "prove_s":1.1105 
+merge-null B c12m29 rep2 rc=0 wall=10s rss=12208MiB "prove_s":1.1812 
+merge-null C c12m29 rep2 rc=0 wall=9s rss=9960MiB "prove_s":1.0763 
+merge-null A c12m29 rep3 rc=0 wall=10s rss=12200MiB "prove_s":1.1142 
+merge-null B c12m29 rep3 rc=0 wall=10s rss=12292MiB "prove_s":1.1033 
+merge-null C c12m29 rep3 rc=0 wall=8s rss=9812MiB "prove_s":1.0826 
+merge-null A c12m29 rep4 rc=0 wall=10s rss=12265MiB "prove_s":1.0881 
+merge-null B c12m29 rep4 rc=0 wall=10s rss=12339MiB "prove_s":1.1330 
+merge-null C c12m29 rep4 rc=0 wall=33s rss=10024MiB "prove_s":2.0071 
+merge-null A c12m29 rep5 rc=0 wall=10s rss=12203MiB "prove_s":1.7065 
+merge-null B c12m29 rep5 rc=0 wall=31s rss=12263MiB "prove_s":1.0817 
+merge-null C c12m29 rep5 rc=0 wall=8s rss=9831MiB "prove_s":1.0697 
+r-slhdsa128s A c14k23m30 rep0 rc=0 wall=264s rss=16941MiB "prove_s":105.3723 
+r-slhdsa128s B c14k23m30 rep0 rc=0 wall=237s rss=16731MiB "prove_s":107.7793 
+r-slhdsa128s C c14k23m30 rep0 rc=0 wall=200s rss=17389MiB "prove_s":88.7545 
+r-slhdsa128s A c14k23m30 rep1 rc=0 wall=222s rss=18880MiB "prove_s":104.5847 
+r-slhdsa128s B c14k23m30 rep1 rc=0 wall=162s rss=18327MiB "prove_s":102.3630 
+r-slhdsa128s C c14k23m30 rep1 rc=0 wall=122s rss=18713MiB "prove_s":78.9977 
+r-slhdsa128s A c14k23m30 rep2 rc=0 wall=154s rss=18421MiB "prove_s":100.2082 
+r-slhdsa128s B c14k23m30 rep2 rc=0 wall=159s rss=19607MiB "prove_s":107.8957 
+r-slhdsa128s C c14k23m30 rep2 rc=0 wall=122s rss=17921MiB "prove_s":72.9589 
+r-slhdsa128s A c14k23m30 rep3 rc=0 wall=158s rss=17189MiB "prove_s":100.5264 
+r-slhdsa128s B c14k23m30 rep3 rc=0 wall=156s rss=18506MiB "prove_s":103.7478 
+r-slhdsa128s C c14k23m30 rep3 rc=0 wall=125s rss=17013MiB "prove_s":75.1080 
+r-mldsa44 A c14k27m30 rep0 rc=0 wall=166s rss=18653MiB "prove_s":106.3631 
+r-mldsa44 B c14k27m30 rep0 rc=0 wall=159s rss=19057MiB "prove_s":102.8636 
+r-mldsa44 C c14k27m30 rep0 rc=0 wall=114s rss=18201MiB "prove_s":71.7833 
+r-mldsa44 A c14k27m30 rep1 rc=0 wall=154s rss=18900MiB "prove_s":100.6884 
+r-mldsa44 B c14k27m30 rep1 rc=0 wall=152s rss=19892MiB "prove_s":99.1279 
+r-mldsa44 C c14k27m30 rep1 rc=0 wall=126s rss=19293MiB "prove_s":85.2086 
+r-mldsa44 A c14k27m30 rep2 rc=0 wall=152s rss=18667MiB "prove_s":98.6831 
+r-mldsa44 B c14k27m30 rep2 rc=0 wall=150s rss=18970MiB "prove_s":96.3517 
+r-mldsa44 C c14k27m30 rep2 rc=0 wall=116s rss=18641MiB "prove_s":73.4739 
+r-mldsa44 A c14k27m30 rep3 rc=0 wall=159s rss=18206MiB "prove_s":103.4381 
+r-mldsa44 B c14k27m30 rep3 rc=0 wall=148s rss=19654MiB "prove_s":95.7394 
+r-mldsa44 C c14k27m30 rep3 rc=0 wall=113s rss=21780MiB "prove_s":71.4044 
+tree16-null A c12m29 rep0 rc=0 wall=77s rss=12884MiB "prove_s":76.6794 
+tree16-null B c12m29 rep0 rc=0 wall=76s rss=12950MiB "prove_s":75.1409 
+tree16-null C c12m29 rep0 rc=0 wall=65s rss=10686MiB "prove_s":65.2908 
+tree16-null A c12m29 rep1 rc=0 wall=76s rss=13145MiB "prove_s":75.7272 
+tree16-null B c12m29 rep1 rc=0 wall=76s rss=12877MiB "prove_s":75.3570 
+tree16-null C c12m29 rep1 rc=0 wall=65s rss=10596MiB "prove_s":65.1825 
+tree16-null A c12m29 rep2 rc=0 wall=76s rss=12707MiB "prove_s":75.9333 
+tree16-null B c12m29 rep2 rc=0 wall=75s rss=12953MiB "prove_s":75.2545 
+tree16-null C c12m29 rep2 rc=0 wall=65s rss=10559MiB "prove_s":64.9194 
+tree16-null A c12m29 rep3 rc=0 wall=77s rss=12843MiB "prove_s":76.6479 
+tree16-null B c12m29 rep3 rc=0 wall=76s rss=13120MiB "prove_s":75.2198 
+tree16-null C c12m29 rep3 rc=0 wall=66s rss=10562MiB "prove_s":65.2241 
+r-null-m27 A c12m27 rep0 rc=101 wall=5s rss=11984MiB  panicked at crates/batch_leaf/src/bin/agg_bench.rs:69:68:
+r-null-m27 B c12m27 rep0 rc=101 wall=5s rss=12040MiB  panicked at crates/batch_leaf/src/bin/agg_bench.rs:69:68:
+r-null-m27 C c12m27 rep0 rc=0 wall=8s rss=9998MiB "prove_s":3.0173 
+r-null-m27 A c12m27 rep1 rc=101 wall=5s rss=11930MiB  panicked at crates/batch_leaf/src/bin/agg_bench.rs:69:68:
+r-null-m27 B c12m27 rep1 rc=101 wall=4s rss=11983MiB  panicked at crates/batch_leaf/src/bin/agg_bench.rs:69:68:
+r-null-m27 C c12m27 rep1 rc=0 wall=7s rss=9831MiB "prove_s":3.0701 
+r-null-m27 A c12m27 rep2 rc=101 wall=5s rss=12006MiB  panicked at crates/batch_leaf/src/bin/agg_bench.rs:69:68:
+r-null-m27 B c12m27 rep2 rc=101 wall=4s rss=12019MiB  panicked at crates/batch_leaf/src/bin/agg_bench.rs:69:68:
+r-null-m27 C c12m27 rep2 rc=0 wall=7s rss=9841MiB "prove_s":2.9757 
+r-null-m27 A c12m27 rep3 rc=101 wall=5s rss=12008MiB  panicked at crates/batch_leaf/src/bin/agg_bench.rs:69:68:
+r-null-m27 B c12m27 rep3 rc=101 wall=4s rss=11994MiB  panicked at crates/batch_leaf/src/bin/agg_bench.rs:69:68:
+r-null-m27 C c12m27 rep3 rc=0 wall=7s rss=9970MiB "prove_s":2.9897 
+done 2026-11-13T10:29:51Z

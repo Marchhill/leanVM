@@ -1,0 +1,1 @@
+{"kind":"r","scheme":"slhdsa128s","n":1,"run":0,"prove_s":72.9589,"verify_ms":49.055,"proof_bytes":398808,"deps":1,"max_claims":16,"code_log":14,"committed_log":23,"mixed_committed_log":30,"node_cycles":27328520,"node_base_cycles":19745657,"node_committed":528163136,"node_log_mem":25,"guest_bytecode":524288,"peak_rss_gib":17.50,"leaf_s":0.323}
