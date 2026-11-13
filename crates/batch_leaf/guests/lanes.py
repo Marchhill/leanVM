@@ -1,0 +1,111 @@
+# Keccak-f sponges over 64-bit lanes (one K element each), and lane decompositions.
+# Lane L of a byte string holds bytes 8L .. 8L+7, little-endian.
+
+SHAKE_PAD = 31
+
+
+def absorb_block(st, inp, out, rate: Const):
+    a = StackBuf(13)
+    for c in unroll(0, 8):
+        a[c] = st[GEN ** c] + inp[GEN ** (2 * c)] + f192(0, 1, 0) * inp[GEN ** (2 * c + 1)]
+    a[8] = st[GEN ** 8] + inp[GEN ** 16]
+    if const(rate == 21):
+        a[9] = st[GEN ** 9] + inp[GEN ** 17] + f192(0, 1, 0) * inp[GEN ** 18]
+        a[10] = st[GEN ** 10] + inp[GEN ** 19] + f192(0, 1, 0) * inp[GEN ** 20]
+    else:
+        a[9] = st[GEN ** 9]
+        a[10] = st[GEN ** 10]
+    a[11] = st[GEN ** 11]
+    a[12] = st[GEN ** 12]
+    keccak_permute(a, out[0:13])
+    return
+
+
+def sponge(lanes, nb: Const, rate: Const, states):
+    # Absorbs nb padded blocks from zero; returns the final state (13 cells).
+    for k in unroll(0, 13):
+        states[GEN ** k] = 0
+    for b in mul_range(1, GEN ** nb):
+        absorb_block(states * b ** 13, lanes * b ** rate, states * (b * GEN) ** 13, rate)
+    return states * GEN ** (13 * nb)
+
+
+def state_lanes(st, out, pairs: Const, rest: Const):
+    # Lanes 0 .. 2 pairs - 1 of a state, then lane 16 (rest >= 1) and 17 .. 20 (rest = 5).
+    for c in unroll(0, pairs):
+        put_cell(st[GEN ** c], out * GEN ** (2 * c))
+    if const(rest != 0):
+        out[GEN ** 16] = st[GEN ** 8]
+    if const(rest == 5):
+        put_cell(st[GEN ** 9], out * GEN ** 17)
+        put_cell(st[GEN ** 10], out * GEN ** 19)
+    return
+
+
+def lane_bytes(lane, out, bt):
+    # out[0..8) = the lane's bytes as g-powers, little-endian; bt[g^v] = v.
+    hint_witness(out[0:8], "bytes")
+    acc = 0
+    for k in unroll(0, 8):
+        v = out[GEN ** k]
+        assert log(v) < 256
+        acc += bt[v] * COORD_BASIS[8 * k]
+    assert acc == lane
+    return
+
+
+def lane_bits(lane, bits):
+    hint_decompose_bits(bits, lane, 64)
+    acc = 0
+    for b in unroll(0, 64):
+        x = bits[GEN ** b]
+        assert x * x == x
+        acc += x * COORD_BASIS[b]
+    assert acc == lane
+    return
+
+
+
+
+def load_checked(dst, npairs_g, d0, d1):
+    # dst[0 .. 2 npairs) <- hinted constant cells, bound by a BLAKE2s chain from zero to (d0, d1).
+    # Keeps large constant tables out of the program text (whose size drives recursion cost).
+    h = HeapBuf(npairs_g ** 2 * GEN ** 2)
+    h[1] = 0
+    h[GEN] = 0
+    for i in mul_range(1, npairs_g):
+        pair = dst * i ** 2
+        hint_witness(pair[0:2], "table_cells")
+        cur = h * i ** 2
+        blake2s([cur[1], cur[GEN]], [pair[1], pair[GEN]], (h * (i * GEN) ** 2)[0:2])
+    fin = h * npairs_g ** 2
+    assert fin[1] == d0
+    assert fin[GEN] == d1
+    return
+
+
+def sponge_var(lanes, q_g, partial, states):
+    # Absorbs lanes[0 .. q) then `partial` (the last message bytes with the padding byte
+    # already in place, the bytes after it zero), zero lanes to the block's end and 0x80,
+    # from the zero state at states; returns the final state. Rate 17 lanes.
+    split = StackBuf(2)
+    hint_witness(split, "sv_split")
+    full_g = split[0]
+    assert log(full_g) < 64
+    assert log(split[1]) < 17
+    assert full_g ** 17 * split[1] == q_g
+    blocks_g = full_g * GEN
+    last_g = blocks_g ** 17 / GEN
+    if q_g == last_g:
+        lanes[q_g] = partial + LANE_TOP
+    else:
+        lanes[q_g] = partial
+        zc = last_g / (q_g * GEN)
+        for k in mul_range(1, zc):
+            lanes[q_g * GEN * k] = 0
+        lanes[last_g] = LANE_TOP
+    for k in unroll(0, 13):
+        states[GEN ** k] = 0
+    for b in mul_range(1, blocks_g):
+        absorb_block(states * b ** 13, lanes * b ** 17, states * (b * GEN) ** 13, 17)
+    return states * blocks_g ** 13

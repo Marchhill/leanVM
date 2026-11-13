@@ -37,7 +37,7 @@ dependencies = [
  "rustc-hash",
  "secp256k1",
  "serde",
- "sha3",
+ "sha3 0.11.0",
 ]
 
 [[package]]
@@ -421,6 +421,26 @@ name = "base64ct"
 version = "1.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
+
+[[package]]
+name = "batch_leaf"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "fips204",
+ "fips205",
+ "lean_compiler",
+ "lean_vm",
+ "primitives",
+ "rand 0.9.4",
+ "rec_aggregation",
+ "serde",
+ "sha2",
+ "sha3 0.10.9",
+ "sphincs",
+ "tide-fn-dsa",
+ "xmss",
+]
 
 [[package]]
 name = "bincode"
@@ -1002,6 +1022,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d45db016d36b838f563236e9193d0ee6ce38f3f68b6c94e914b4929c96bbb890"
 
 [[package]]
+name = "fips204"
+version = "0.4.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c9fb5a367b9846933e271a3c2a992930743f82ae5e8cb7faa780715a80fa0b15"
+dependencies = [
+ "rand_core 0.6.4",
+ "sha2",
+ "sha3 0.10.9",
+ "zeroize",
+]
+
+[[package]]
+name = "fips205"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f5626bf5534df4ebdbd2536465d7eaa8a9dc2cdeb7e036e0ecf291dcc80ffb6"
+dependencies = [
+ "rand_core 0.6.4",
+ "sha2",
+ "sha3 0.10.9",
+ "zeroize",
+]
+
+[[package]]
 name = "fixed-cache"
 version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1361,6 +1405,15 @@ dependencies = [
  "elliptic-curve",
  "once_cell",
  "sha2",
+]
+
+[[package]]
+name = "keccak"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb26cec98cce3a3d96cbb7bced3c4b16e3d13f27ec56dbd62cbc8f39cfb9d653"
+dependencies = [
+ "cpufeatures 0.2.17",
 ]
 
 [[package]]
@@ -2121,12 +2174,22 @@ dependencies = [
 
 [[package]]
 name = "sha3"
+version = "0.10.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77fd7028345d415a4034cf8777cd4f8ab1851274233b45f84e3d955502d93874"
+dependencies = [
+ "digest 0.10.7",
+ "keccak 0.1.6",
+]
+
+[[package]]
+name = "sha3"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be176f1a57ce4e3d31c1a166222d9768de5954f811601fb7ca06fc8203905ce1"
 dependencies = [
  "digest 0.11.3",
- "keccak",
+ "keccak 0.2.2",
 ]
 
 [[package]]
@@ -2280,6 +2343,60 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ad99c4c6d32803332c548b1af0540b357b3f5fc0be8f6c6bfe8b2e6ae784070"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "tide-fn-dsa"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6ffdeaeb54b57316fee4c1bd5a7eaa2b2d46560e4a9404dbea0c86ea68b645e"
+dependencies = [
+ "tide-fn-dsa-comm",
+ "tide-fn-dsa-kgen",
+ "tide-fn-dsa-sign",
+ "tide-fn-dsa-vrfy",
+]
+
+[[package]]
+name = "tide-fn-dsa-comm"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2771499ddbaa44c358b9684222b376dfc910a3a983bf2c1e9f82c62a684abb9"
+dependencies = [
+ "cpufeatures 0.2.17",
+ "rand_core 0.6.4",
+ "zeroize",
+]
+
+[[package]]
+name = "tide-fn-dsa-kgen"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56323c175a7cfb950d5768657a5c0fa72cce113acb0d0b7470b1bbdb00679c59"
+dependencies = [
+ "cc",
+ "sha2",
+ "tide-fn-dsa-comm",
+ "zeroize",
+]
+
+[[package]]
+name = "tide-fn-dsa-sign"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "578dd20255b4883c0eb3bb3ba10404af36e812ad09007a113508f15da8ad2a23"
+dependencies = [
+ "tide-fn-dsa-comm",
+ "zeroize",
+]
+
+[[package]]
+name = "tide-fn-dsa-vrfy"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8a19f70a6185d9d7acd1ab9a212064a38afc51d9ad5806293d618f9099bafaf"
+dependencies = [
+ "tide-fn-dsa-comm",
 ]
 
 [[package]]
