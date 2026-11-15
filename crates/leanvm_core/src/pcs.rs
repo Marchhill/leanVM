@@ -147,6 +147,84 @@ pub fn open(ps: &mut ProverState, c: Committed, q: Vec<F64>, points: &[SlotClaim
     open_batch_mixed_whir_stacked(ps, c.mu, q, c.prover_data, &cfg, &points, ring)
 }
 
+/// A program's stacked bytecode table, committed once as the stack the verifier's committed mode opens
+/// (`verifier::Bytecode::committed`): the table, zero past it, in `2^stack_log` words at
+/// [`verifier::COMMITTED_BYTECODE_LOG_INV_RATE`].
+pub struct BytecodeCommitment {
+    /// The program's instructions, as a log.
+    pub log_instructions: usize,
+    pub root: [u8; 32],
+    /// The table's values at the root's out-of-domain points (`verifier::committed_ood_points`), encoded
+    /// (`verifier::committed_ood_encoding`).
+    pub ood: [u8; 32],
+    /// The program's key and Fiat-Shamir IV, `verifier::committed_key(log_instructions, root, ood)`.
+    pub key: [u8; 32],
+    ood_claims: Vec<(Vec<primitives::field::F128>, primitives::field::F128)>,
+    stack_log: usize,
+    /// The table, zero-padded to the whole stack, which the out-of-domain claims span.
+    stack: Vec<F64>,
+}
+
+impl BytecodeCommitment {
+    /// Commit `table`, the stacked bytecode of a `2^log_instructions`-instruction program.
+    pub fn new(table: &[F64], log_instructions: usize) -> Self {
+        let stack_log = verifier::committed_bytecode_stack_log(table.len());
+        let mut stack = table.to_vec();
+        stack.resize(1 << stack_log, F64::ZERO);
+        let (commitment, _) = whir_commit(&stack, stack_log, LOG_BATCH, verifier::COMMITTED_BYTECODE_LOG_INV_RATE);
+        let points = verifier::committed_ood_points(log_instructions, &commitment.root);
+        let values: [verifier::E; verifier::COMMITTED_OOD_SAMPLES] = std::array::from_fn(|i| {
+            let point: Vec<primitives::field::F128> = points[i].iter().map(|&e| crate::cpu::from_scalar(e)).collect();
+            crate::cpu::to_scalar(&primitives::multilinear::mle_eval_par(&stack, &point))
+        });
+        let ood = verifier::committed_ood_encoding(&values);
+        let ood_claims = points
+            .iter()
+            .zip(values)
+            .map(|(point, value)| {
+                (
+                    point.iter().map(|&e| crate::cpu::from_scalar(e)).collect(),
+                    crate::cpu::from_scalar(value),
+                )
+            })
+            .collect();
+        Self {
+            log_instructions,
+            root: commitment.root,
+            ood,
+            key: verifier::committed_key(log_instructions, &commitment.root, &ood),
+            ood_claims,
+            stack_log,
+            stack,
+        }
+    }
+
+    /// Open the commitment at `point` (`value` the table's multilinear there, the stack's high coordinates zero) and
+    /// at the out-of-domain points, re-encoding the table: an opening consumes the codeword, and this one is small.
+    pub(crate) fn open(
+        &self,
+        ps: &mut ProverState,
+        mut point: Vec<primitives::field::F128>,
+        value: primitives::field::F128,
+    ) {
+        let rate = verifier::COMMITTED_BYTECODE_LOG_INV_RATE;
+        let (_, prover_data) = whir_commit(&self.stack, self.stack_log, LOG_BATCH, rate);
+        point.resize(self.stack_log, primitives::field::F128::ZERO);
+        let mut claims = vec![SlotClaim::Point {
+            offset: 0,
+            low_point: point,
+            value,
+        }];
+        claims.extend(self.ood_claims.iter().map(|(low_point, value)| SlotClaim::Point {
+            offset: 0,
+            low_point: low_point.clone(),
+            value: *value,
+        }));
+        let cfg = whir_config(self.stack_log, rate);
+        ::pcs::stack_open::open_points_whir_stacked(ps, self.stack_log, self.stack.clone(), prover_data, &cfg, &claims);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

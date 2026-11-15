@@ -271,6 +271,7 @@ dependencies = [
  "leanvm_core",
  "parallel",
  "primitives",
+ "verifier",
 ]
 
 [[package]]

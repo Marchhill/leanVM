@@ -86,6 +86,8 @@ pub struct Program {
     /// The public bytecode columns, computed once at assembly with the IV: every layout of the
     /// program shares them, as a proof's and each of a recursion node's children's do.
     bytecode_columns: layout::BytecodeColumns,
+    /// Set by [`Program::committed`]: the table's commitment, whose key is then the IV.
+    bytecode_commitment: Option<std::sync::Arc<pcs::BytecodeCommitment>>,
     /// Prover-side frame/buffer allocation hints (keyed by global pc) and the
     /// size of `main`'s frame: the nondeterminism [`Program::execute`] needs to
     /// run the program. Public verification ([`verify`]) ignores them.
@@ -142,12 +144,37 @@ impl Program {
             prog,
             fiat_shamir_iv,
             bytecode_columns,
+            bytecode_commitment: None,
             hints,
             main_frame,
             witness: HashMap::new(),
             fn_ranges: Vec::new(),
             src_lines: Vec::new(),
         }
+    }
+
+    /// This program proved and verified by its table's commitment rather than its table
+    /// (`verifier::Bytecode::committed`): its IV becomes the commitment's key, and every proof
+    /// opens the commitment at the bus's bytecode point.
+    pub fn committed(mut self) -> Self {
+        let table = layout::stack_columns(&self.bytecode_columns);
+        let commitment = pcs::BytecodeCommitment::new(&table, self.prog.len().trailing_zeros() as usize);
+        self.fiat_shamir_iv = commitment.key;
+        self.bytecode_commitment = Some(std::sync::Arc::new(commitment));
+        self
+    }
+
+    /// A malicious prover's switch: prove under `iv` rather than the program's own IV.
+    #[cfg(feature = "forge")]
+    #[doc(hidden)]
+    pub fn forge_fiat_shamir_iv(mut self, iv: [u8; 32]) -> Self {
+        self.fiat_shamir_iv = iv;
+        self
+    }
+
+    /// The table's commitment, for a [`Program::committed`] program.
+    pub fn bytecode_commitment(&self) -> Option<&pcs::BytecodeCommitment> {
+        self.bytecode_commitment.as_deref()
     }
 
     /// The bytecode, a power of two long.
@@ -510,6 +537,11 @@ pub fn prove(program: &Program, public_input: [F128; 2], log_inv_rate: usize) ->
     let (ring, outputs) = openings.into_pcs_claims(offset);
     slots.extend(outputs);
     crate::stage!("PCS open", || { pcs::open(&mut ps, committed, w.q, &slots, &ring) });
+    if let Some(commitment) = &program.bytecode_commitment {
+        crate::stage!("Bytecode open", || {
+            commitment.open(&mut ps, bus.bytecode_point, bus.bytecode_value)
+        });
+    }
     Ok((
         ps.into_proof(),
         Stats {
@@ -616,11 +648,18 @@ pub fn verify(
     public_input: &[F128; 2],
     proof: &Proof,
 ) -> Result<verifier::Summary, verifier::VerifierError> {
-    let table: Vec<u64> = layout::bytecode_table(&program.prog)
-        .iter()
-        .map(|word| word.0)
-        .collect();
-    let bytecode = verifier::Bytecode::new(&table);
+    let bytecode = match &program.bytecode_commitment {
+        Some(commitment) => {
+            verifier::Bytecode::committed(commitment.log_instructions, commitment.root, commitment.ood)?
+        }
+        None => {
+            let table: Vec<u64> = layout::bytecode_table(&program.prog)
+                .iter()
+                .map(|word| word.0)
+                .collect();
+            verifier::Bytecode::new(&table)
+        }
+    };
     verifier::verify_execution(&bytecode, &public_input_bytes(public_input), &scalar_proof(proof))
 }
 

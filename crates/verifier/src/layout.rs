@@ -66,6 +66,18 @@ pub struct BusBlock {
 /// follows needs no length field of its own. Nothing derives it from the constants below: any change
 /// to the constraint system bumps it by hand. Mirrored in `formal/Statement/LeanVmVerifier.lean`.
 pub const TAG: &[u8] = b"leanvm-v1";
+/// Leads a committed program's key ([`crate::bytecode::committed_key`]): 15 bytes, so that with the log of its
+/// instructions it fills one 16-byte cell. Version 2 fixes two out-of-domain values over the 128-bit field.
+pub const COMMITTED_TAG: &[u8; 15] = b"leanvm-commit-2";
+/// Leads the public input that, with a committed table's root as the IV, seeds the sponge its out-of-domain points
+/// are drawn from ([`crate::bytecode::committed_ood_points`]): 15 bytes, the log of the instructions the 16th.
+pub const COMMITTED_OOD_TAG: &[u8; 15] = b"leanvm-ood-pt-2";
+/// A committed program's table is committed as a stack of `2^max(MIN_STACKED_LOG, log2 len)` words, zero past the
+/// table, at this inverse rate, the PCS's highest: the opening that discharges a proof's claim on it then takes the
+/// fewest queries. A protocol constant, so the key binds it.
+pub const COMMITTED_BYTECODE_LOG_INV_RATE: usize = 4;
+/// The largest committed table, as a log of its words.
+pub const MAX_COMMITTED_BYTECODE_LOG: usize = MAX_STACKED_LOG;
 
 // The columns no instruction table owns. They come first in the global column numbering, the tables after.
 pub const NUM_GLOBAL_COLUMNS: usize = 5;

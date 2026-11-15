@@ -122,6 +122,7 @@ type Side<'a> = (&'a [BusBlock], &'a BusLayout, Vec<E>, &'a [E], E);
 pub struct BusResult {
     pub claims: Vec<ColumnClaim>,
     pub bytecode_point: Vec<E>, // where the bytecode sumcheck leaves the stacked bytecode: zeta's low coordinates, then its point
+    pub bytecode_value: E,      // the stacked bytecode there, as the stream sends it
     pub point: Vec<E>,          // the GKR point zeta, which the table sumcheck reuses
     pub forms: Vec<Vec<Form>>,  // forms[table][tree]
     pub totals: Vec<E>,         // what the tables owe each tree, derived
@@ -177,10 +178,13 @@ pub fn verify_bus_balance(layout: &Layout, transcript: &mut Transcript) -> Resul
             claim == dot(&eq_kernel(&slot_point), &weights) * bytecode_value,
             VerifierError::BytecodeShare,
         )?;
-        require(
-            layout.bytecode.evaluate(&bytecode_point)? == bytecode_value,
-            VerifierError::BytecodeValue,
-        )?;
+        // A committed program's table is not at hand: the walk's last step opens its commitment there instead.
+        if layout.bytecode.commitment().is_none() {
+            require(
+                layout.bytecode.evaluate(&bytecode_point)? == bytecode_value,
+                VerifierError::BytecodeValue,
+            )?;
+        }
     }
 
     // The three framework tuples, each its coordinates weighted by the slots' weights; slots past the ones
@@ -240,6 +244,7 @@ pub fn verify_bus_balance(layout: &Layout, transcript: &mut Transcript) -> Resul
     Ok(BusResult {
         claims,
         bytecode_point,
+        bytecode_value,
         point,
         forms,
         totals,

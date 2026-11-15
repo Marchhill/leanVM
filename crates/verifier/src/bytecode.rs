@@ -2,8 +2,9 @@
 
 use crate::field::{E, ZERO, reduce};
 use crate::hash::{Digest, keccak_hash};
-use crate::layout::TAG;
+use crate::layout::{BUS_BITS, COMMITTED_OOD_TAG, COMMITTED_TAG, MAX_COMMITTED_BYTECODE_LOG, MIN_STACKED_LOG, TAG};
 use crate::multilinear::eq_kernel;
+use crate::transcript::Sponge;
 use crate::{VerifierError, require};
 
 /// The stacked bytecode multilinear, prepared to be evaluated, and the Fiat-Shamir IV it gives every transcript.
@@ -20,7 +21,19 @@ pub struct Bytecode {
     positions: Vec<u16>,
     /// A byte some word of a block has: which of the word's eight, times 256, plus its value.
     bytes: Vec<u16>,
+    /// The table's commitment ([`Bytecode::committed`]), when the verifier holds that instead of the table.
+    commitment: Option<Commitment>,
 }
+
+/// A committed table's root, and the out-of-domain evaluations its key fixes.
+#[derive(Clone, Debug)]
+struct Commitment {
+    root: Digest,
+    ood: [(Vec<E>, E); COMMITTED_OOD_SAMPLES],
+}
+
+/// The out-of-domain samples a committed key fixes ([`committed_ood_points`]).
+pub const COMMITTED_OOD_SAMPLES: usize = 2;
 
 /// A block with a nonzero word: its index, and where its words and bytes end.
 #[derive(Clone, Copy, Debug)]
@@ -85,7 +98,57 @@ impl Bytecode {
             words,
             positions,
             bytes,
+            commitment: None,
         }
+    }
+
+    /// A program the verifier knows only by `2^log_instructions`, the root of its stacked table's commitment, and
+    /// the table's values `ood` ([`committed_ood_encoding`]) at the root's out-of-domain points.
+    ///
+    /// The Fiat-Shamir IV is [`committed_key`]`(log_instructions, root, ood)`. A proof of such a program opens the
+    /// commitment at the bus's bytecode point and at the out-of-domain points, so verifying it never touches the table.
+    pub fn committed(log_instructions: usize, root: [u8; 32], ood: [u8; 32]) -> Result<Self, VerifierError> {
+        require(
+            log_instructions + BUS_BITS <= MAX_COMMITTED_BYTECODE_LOG,
+            VerifierError::MultilinearSize,
+        )?;
+        let points = committed_ood_points(log_instructions, &root);
+        let values = committed_ood_values(&ood);
+        Ok(Self {
+            len: 1 << (log_instructions + BUS_BITS),
+            fiat_shamir_iv: Digest(committed_key(log_instructions, &root, &ood)),
+            blocks: Vec::new(),
+            words: Vec::new(),
+            positions: Vec::new(),
+            bytes: Vec::new(),
+            commitment: Some(Commitment {
+                root: Digest(root),
+                ood: std::array::from_fn(|i| (points[i].clone(), values[i])),
+            }),
+        })
+    }
+
+    /// A malicious prover's switch: walk a transcript under `iv` rather than the program's own IV.
+    #[cfg(feature = "forge")]
+    #[doc(hidden)]
+    pub fn forge_fiat_shamir_iv(mut self, iv: [u8; 32]) -> Self {
+        self.fiat_shamir_iv = Digest(iv);
+        self
+    }
+
+    /// The root of the table's commitment, for a [`Bytecode::committed`] program.
+    pub fn commitment(&self) -> Option<[u8; 32]> {
+        self.commitment.as_ref().map(|c| c.root.0)
+    }
+
+    /// The out-of-domain points and values a [`Bytecode::committed`] program's key fixes.
+    pub(crate) fn ood_claims(&self) -> Option<[(Vec<E>, E); COMMITTED_OOD_SAMPLES]> {
+        self.commitment.as_ref().map(|c| c.ood.clone())
+    }
+
+    /// The Fiat-Shamir IV every proof of this program is made under.
+    pub fn fiat_shamir_iv(&self) -> [u8; 32] {
+        self.fiat_shamir_iv.0
     }
 
     pub fn len(&self) -> usize {
@@ -103,7 +166,7 @@ impl Bytecode {
     /// and each bucket to every bit its byte value sets: then bit `k` of the words holds its sum, which `x^k` scales.
     pub fn evaluate(&self, point: &[E]) -> Result<E, VerifierError> {
         require(
-            point.len() < 64 && self.len == 1 << point.len(),
+            self.commitment.is_none() && point.len() < 64 && self.len == 1 << point.len(),
             VerifierError::MultilinearSize,
         )?;
         let (low, high) = point.split_at(point.len().min(BLOCK_LOG));
@@ -134,6 +197,64 @@ impl Bytecode {
         }
         Ok(total)
     }
+}
+
+/// The log size of the stack a committed table of `len` words is committed in ([`Bytecode::committed`]).
+pub fn committed_bytecode_stack_log(len: usize) -> usize {
+    MIN_STACKED_LOG.max(len.trailing_zeros() as usize)
+}
+
+/// The key, and Fiat-Shamir IV, of a program of `2^log_instructions` instructions whose stacked table commits to
+/// `root` and takes the values `ood` encodes at [`committed_ood_points`] ([`Bytecode::committed`]): Keccak-256 of
+/// [`COMMITTED_TAG`], the log as one byte, the root, then `ood`.
+///
+/// The tag differs from [`TAG`] in its first bytes, so no key is a table digest's preimage prefix and the two
+/// kinds of IV never share a transcript.
+pub fn committed_key(log_instructions: usize, root: &[u8; 32], ood: &[u8; 32]) -> [u8; 32] {
+    let mut preimage = Vec::with_capacity(COMMITTED_TAG.len() + 1 + 64);
+    preimage.extend_from_slice(COMMITTED_TAG);
+    preimage.push(log_instructions as u8);
+    preimage.extend_from_slice(root);
+    preimage.extend_from_slice(ood);
+    keccak_hash(&preimage).0
+}
+
+/// The out-of-domain points of a committed table: [`COMMITTED_OOD_SAMPLES`] points of one coordinate per stack
+/// variable, each coordinate a challenge of the sponge seeded with `root` as the IV and [`COMMITTED_OOD_TAG`] then
+/// the log of the instructions as the public input.
+///
+/// WHIR's first level opens the root in the list-decoding regime, and a root the verifier does not derive itself may
+/// sit near several codewords: an opening's caller adds an out-of-domain claim on the root to leave one of them
+/// (the execution's own commitment reads one, ground, right after its root). A key is made once, offline, by whoever
+/// publishes the program, so its points cannot be ground in a proof; fixing the table's values at two independent
+/// points in the key instead bounds a root's ambiguity by `L²·(μ/|E|)²` over the Johnson list of `L` codewords,
+/// about `2^-220` at `|E| = 2^128`, `μ <= 30` and `log L < 10`: below any feasible number of roots tried.
+pub fn committed_ood_points(log_instructions: usize, root: &[u8; 32]) -> [Vec<E>; COMMITTED_OOD_SAMPLES] {
+    let mut public_input = [0u8; 32];
+    public_input[..15].copy_from_slice(COMMITTED_OOD_TAG);
+    public_input[15] = log_instructions as u8;
+    let mut sponge = Sponge::new(Digest(*root), Digest(public_input));
+    let stack_log = committed_bytecode_stack_log(1 << (log_instructions + BUS_BITS));
+    std::array::from_fn(|_| (0..stack_log).map(|_| sponge.sample()).collect())
+}
+
+/// Values as the 16-byte cells a committed key carries them in: each `c0 ‖ c1`, little-endian.
+pub fn committed_ood_encoding(values: &[E; COMMITTED_OOD_SAMPLES]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    for (chunk, limb) in out
+        .as_chunks_mut::<8>()
+        .0
+        .iter_mut()
+        .zip(values.iter().flat_map(|v| [v.c0, v.c1]))
+    {
+        *chunk = limb.to_le_bytes();
+    }
+    out
+}
+
+fn committed_ood_values(ood: &[u8; 32]) -> [E; COMMITTED_OOD_SAMPLES] {
+    let limb = |i: usize| u64::from_le_bytes(ood.as_chunks::<8>().0[i]);
+    std::array::from_fn(|i| E::new(limb(2 * i), limb(2 * i + 1)))
 }
 
 /// `sum_k x^k * sums[k]`: each limb shifted into place, then one reduction.

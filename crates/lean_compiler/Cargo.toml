@@ -13,3 +13,4 @@ leanvm_core.workspace = true
 
 [dev-dependencies]
 parallel.workspace = true
+verifier = { workspace = true, features = ["forge"] }

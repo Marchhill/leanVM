@@ -774,7 +774,15 @@ fn sides<'a>(
 /// sumcheck of [`N_TUPLE_BITS`] degree-two rounds over `x`, the low bit bound first, ending at
 /// `r⃗`, then `P(ζ_lo, r⃗)`, whose product with `α̃(r⃗)` the verifier checks against the last round.
 /// Every value comes off the public columns' evaluations at `ζ_lo`, which the decomposition cached.
-fn prove_bytecode_share(push: &[Block], zeta: &[F128], w: &[F128], public: &mut PublicEvals, ps: &mut ProverState) {
+///
+/// Returns `(ζ_lo, r⃗)` and `P` there, which a committed program's proof opens its table's commitment at.
+fn prove_bytecode_share(
+    push: &[Block],
+    zeta: &[F128],
+    w: &[F128],
+    public: &mut PublicEvals,
+    ps: &mut ProverState,
+) -> (Vec<F128>, F128) {
     let block = push
         .iter()
         .find(|blk| blk.coords.iter().any(|c| matches!(c, Coord::Public(_))))
@@ -787,6 +795,7 @@ fn prove_bytecode_share(push: &[Block], zeta: &[F128], w: &[F128], public: &mut 
         })
         .collect();
     let mut weights = w.to_vec();
+    let mut point = zeta_lo.to_vec();
     ps.add_scalar(weights.iter().zip(&slots).map(|(&a, &p)| a * p).sum());
     for _ in 0..N_TUPLE_BITS {
         let pairs = || weights.as_chunks::<2>().0.iter().zip(slots.as_chunks::<2>().0);
@@ -795,10 +804,12 @@ fn prove_bytecode_share(push: &[Block], zeta: &[F128], w: &[F128], public: &mut 
         let c1: F128 = pairs().map(|(a, p)| a[0] * (p[0] + p[1]) + (a[0] + a[1]) * p[0]).sum();
         ps.add_round_poly(&[c0, c1, c2], false);
         let r = ps.sample();
+        point.push(r);
         let fold = |v: &[F128]| -> Vec<F128> { v.as_chunks::<2>().0.iter().map(|h| interp(h[0], h[1], r)).collect() };
         (weights, slots) = (fold(&weights), fold(&slots));
     }
     ps.add_scalar(slots[0]);
+    (point, slots[0])
 }
 
 /// Everything the bus hands on: the framework blocks' column claims,
@@ -815,6 +826,9 @@ pub(crate) struct BusProof {
     /// derived `Σ_s ξ^·totals[s]`, and the shares serve only to build each round's
     /// waiting line, which rides inside the round polynomial.
     pub sigmas: [Vec<F128>; N_BUS_TREES],
+    /// Where the bytecode sumcheck leaves the stacked bytecode (`ζ`'s low coordinates, then `r⃗`), and its value there.
+    pub bytecode_point: Vec<F128>,
+    pub bytecode_value: F128,
 }
 
 /// Prove the bus balances; returns the per-column claims to open (§sec:leafstack). The
@@ -864,7 +878,7 @@ pub(crate) fn prove_balance(
     let mut forms = std::array::from_fn(|_| tables.iter().map(|&(_, n)| BusForm::new(n)).collect::<Vec<_>>());
     let mut frameworks = [F128::ZERO; N_BUS_TREES];
     let mut public = PublicEvals::new();
-    crate::stage!("Bus decompose", || {
+    let (bytecode_point, bytecode_value) = crate::stage!("Bus decompose", || {
         for (s, &(blocks, lay, a, g)) in sides.iter().enumerate() {
             frameworks[s] = decompose_prove(
                 blocks,
@@ -880,7 +894,7 @@ pub(crate) fn prove_balance(
                 ps,
             );
         }
-        prove_bytecode_share(push, &bus_gkr.point, &w, &mut public, ps);
+        prove_bytecode_share(push, &bus_gkr.point, &w, &mut public, ps)
     });
     let (table_evals, prod_sums) = crate::stage!("Bus tables", || tables_and_prods_at(
         cols,
@@ -910,6 +924,8 @@ pub(crate) fn prove_balance(
         point: bus_gkr.point,
         forms,
         sigmas,
+        bytecode_point,
+        bytecode_value,
     }
 }
 

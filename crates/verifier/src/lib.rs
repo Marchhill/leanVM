@@ -21,11 +21,14 @@ mod ring_switch;
 mod transcript;
 mod whir;
 
-pub use bytecode::Bytecode;
+pub use bytecode::{
+    Bytecode, COMMITTED_OOD_SAMPLES, committed_bytecode_stack_log, committed_key, committed_ood_encoding,
+    committed_ood_points,
+};
 pub use field::{E, K};
 pub use layout::{
-    MAX_LOG_BYTECODE, MAX_LOG_MEMORY, MAX_STACKED_LOG, MAX_TABLE_LOG, MIN_LOG_MEMORY, MIN_STACKED_LOG, TAG,
-    min_execution_stacked_log,
+    COMMITTED_BYTECODE_LOG_INV_RATE, COMMITTED_OOD_TAG, COMMITTED_TAG, MAX_COMMITTED_BYTECODE_LOG, MAX_LOG_BYTECODE,
+    MAX_LOG_MEMORY, MAX_STACKED_LOG, MAX_TABLE_LOG, MIN_LOG_MEMORY, MIN_STACKED_LOG, TAG, min_execution_stacked_log,
 };
 pub use merkle::MerklePath;
 pub use transcript::Proof;
@@ -171,6 +174,9 @@ pub struct Summary {
     pub log_inv_rate: usize,
     /// Where the bus's bytecode sumcheck leaves the stacked bytecode, `(zeta_low, r)`. Its value there is the claim an aggregate defers.
     pub bytecode_point: Vec<E>,
+    /// The stacked bytecode's value there, as the proof sends it: a table's holder checks it by evaluating the table,
+    /// a committed program's proof opens its commitment there.
+    pub bytecode_value: E,
     /// The stream positions the Keccak reduction reads.
     pub keccak_scalars: Range<usize>,
 }
@@ -352,12 +358,31 @@ fn walk(bytecode: &Bytecode, public_input: &[u8; 32], proof: &Proof, checked: bo
         log_inverse_rate as usize,
         &stack_claims,
     )?;
+    // 8] A committed program: open its table's commitment at the bus's bytecode point, the stack's high coordinates
+    // zero, and at the out-of-domain points its key fixes the values at.
+    if let (Some(bytecode_root), Some(ood)) = (bytecode.commitment(), bytecode.ood_claims()) {
+        let stack_log = committed_bytecode_stack_log(bytecode.len());
+        let mut point = bus.bytecode_point.clone();
+        point.resize(stack_log, ZERO);
+        let mut claims: Vec<StackClaim> = vec![(Box::new(move |x| eq_eval(&point, x)), bus.bytecode_value)];
+        for (ood_point, ood_value) in ood {
+            claims.push((Box::new(move |x| eq_eval(&ood_point, x)), ood_value));
+        }
+        verify_stacked_opening(
+            &mut transcript,
+            Digest(bytecode_root),
+            stack_log,
+            COMMITTED_BYTECODE_LOG_INV_RATE,
+            &claims,
+        )?;
+    }
     transcript.finish()?;
     Ok(Summary {
         log_memory: layout.log_memory,
         table_rows,
         log_inv_rate: log_inverse_rate as usize,
         bytecode_point: bus.bytecode_point,
+        bytecode_value: bus.bytecode_value,
         keccak_scalars,
     })
 }

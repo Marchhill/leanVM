@@ -5,6 +5,10 @@ edition.workspace = true
 publish = false
 description = "Portable single-threaded verifier for leanVM execution proofs: std only, no explicit SIMD, no unsafe"
 
+[features]
+# A malicious prover's switches, for rejection tests only.
+forge = []
+
 [lints]
 workspace = true
 
